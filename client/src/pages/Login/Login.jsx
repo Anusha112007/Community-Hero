@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { AuthInput } from '../../components/auth/AuthInput';
 import { Loader } from '../../components/auth/Loader';
 import { Toast } from '../../components/auth/Toast';
-import styles from '../auth/LoginPage.module.css';
+import styles from '../auth/Loginpage.module.css';
 
 const Login = () => {
   const [email, setEmail] = useState('');

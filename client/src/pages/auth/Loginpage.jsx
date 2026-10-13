@@ -5,7 +5,7 @@ import { FiArrowRight } from 'react-icons/fi';
 import { useAuth } from '../../context/AuthContext';
 import { Toast } from '../../components/auth/Toast';
 import { Loader } from '../../components/auth/Loader';
-import styles from './LoginPage.module.css';
+import styles from './Loginpage.module.css';
 
 const LoginPage = () => {
   const { loginAsDemo } = useAuth();

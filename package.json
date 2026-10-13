@@ -5,6 +5,7 @@
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "server": "npm run dev --prefix server",
     "client": "npm run dev --prefix client",
+    "build": "npm run build --prefix client",
     "start": "concurrently \"npm run server\" \"npm run client\""
   },
   "dependencies": {

@@ -5,7 +5,7 @@ import {
   FiCheckSquare, FiClock, FiCheckCircle, FiBriefcase, FiPlusCircle, FiUser 
 } from 'react-icons/fi';
 import { useAuth } from '../../../context/AuthContext';
-import { ROLES } from '../../../constants/roles';
+import { ROLES } from '../../../Constants/roles';
 import './Sidebar.css';
 
 export default function Sidebar() {
