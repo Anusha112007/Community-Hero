@@ -5,7 +5,7 @@ import {
   FiActivity, FiLoader, FiX, FiCalendar, FiImage,
   FiArchive, FiXCircle
 } from 'react-icons/fi';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import './IssueHistory.css';
 
@@ -100,23 +100,16 @@ export default function IssueHistory() {
     try {
       let apiIssues = [];
       try {
-        const res = await axios.get('http://localhost:5000/api/issues');
+        const res = await api.get(`/issues/ward/${encodeURIComponent(wardId)}`);
         if (res.data && Array.isArray(res.data)) apiIssues = res.data;
       } catch (err) {
         console.error('API fetch error:', err);
       }
 
-      let localReports = [];
-      try {
-        localReports = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      } catch (e) {
-        console.error('Local reports read error:', e);
-      }
-
       const mapById = new Map();
 
-      [...apiIssues, ...localReports].forEach((item) => {
-        const key = item._id || item.id;
+      apiIssues.forEach((item) => {
+        const key = item.complaintId || item._id;
         if (!key) return;
 
         // Include issues that show officer activity:

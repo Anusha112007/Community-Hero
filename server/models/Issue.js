@@ -1,7 +1,44 @@
 const mongoose = require("mongoose");
 
+const VALID_STATUSES = [
+  "Submitted",
+  "Under Ward Verification",
+  "Verified",
+  "Rejected",
+  "More Information Required",
+  "Forwarded to Department",
+  "Work Assigned",
+  "Work In Progress",
+  "Work Completed",
+  "Awaiting Admin Verification",
+  "Resolved",
+  "Reopened",
+  // Legacy aliases
+  "Reported",
+  "UNSOLVED",
+  "Under Review",
+  "UNDER REVIEW",
+  "In Progress",
+  "IN PROGRESS",
+  "Assigned",
+  "ASSIGNED",
+  "Pending Verification",
+  "PENDING VERIFICATION",
+  "Completed",
+  "COMPLETED",
+  "SOLVED",
+  "REJECTED",
+];
+
 const issueSchema = new mongoose.Schema(
   {
+    complaintId: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      index: true,
+    },
     title: {
       type: String,
       required: [true, "Title is required"],
@@ -62,25 +99,9 @@ const issueSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: [
-        "Reported",
-        "UNSOLVED",
-        "Under Review",
-        "UNDER REVIEW",
-        "In Progress",
-        "IN PROGRESS",
-        "Assigned",
-        "ASSIGNED",
-        "Pending Verification",
-        "PENDING VERIFICATION",
-        "Resolved",
-        "SOLVED",
-        "Completed",
-        "COMPLETED",
-        "Rejected",
-        "REJECTED",
-      ],
-      default: "Reported",
+      enum: VALID_STATUSES,
+      default: "Submitted",
+      index: true,
     },
     priority: {
       type: String,
@@ -90,57 +111,121 @@ const issueSchema = new mongoose.Schema(
     wardId: {
       type: String,
       default: "WARD-04",
+      trim: true,
+      index: true,
     },
-    officerRemarks: {
+    wardName: {
+      type: String,
+      default: "Duvvada Ward 4",
+      trim: true,
+    },
+    assignedDept: {
+      type: String,
+      default: "Roads & Infrastructure Department",
+      trim: true,
+      index: true,
+    },
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    reportedDate: {
+      type: Date,
+      default: Date.now,
+    },
+
+    // Ward Officer Verification Details
+    verificationDetails: {
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      officerName: { type: String, default: "" },
+      verifiedAt: { type: Date },
+      status: { type: String, default: "" },
+      remarks: { type: String, default: "" },
+      rejectionReason: { type: String, default: "" },
+      infoRequested: { type: String, default: "" },
+      infoProvided: { type: String, default: "" },
+      infoProvidedAt: { type: Date },
+    },
+
+    // Department Work Assignment Details
+    assignmentDetails: {
+      assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      officerName: { type: String, default: "" },
+      assignedAt: { type: Date },
+      assignedTeam: { type: String, default: "" },
+      assignedStaff: { type: String, default: "" },
+      staffPhone: { type: String, default: "" },
+      priority: { type: String, default: "High" },
+      estimatedCompletionDate: { type: Date },
+      workInstructions: { type: String, default: "" },
+    },
+
+    // Work Progress Tracking
+    progress: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    progressNotes: {
       type: String,
       default: "",
     },
-    actionTaken: {
-      type: String,
-      default: "",
+
+    // Department Work Completion Details
+    completionDetails: {
+      completedAt: { type: Date },
+      completedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      officerName: { type: String, default: "" },
+      beforeImage: { type: String, default: "" },
+      afterImage: { type: String, default: "" },
+      completionRemarks: { type: String, default: "" },
     },
-    expectedResolutionDate: {
-      type: String,
-      default: "",
+
+    // Admin Final Verification & Approval
+    adminReview: {
+      reviewedAt: { type: Date },
+      reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      adminName: { type: String, default: "" },
+      approved: { type: Boolean, default: false },
+      remarks: { type: String, default: "" },
     },
-    resolutionImage: {
-      type: String,
-      default: "",
+
+    // Reopen Audit History
+    reopenDetails: {
+      reopenedAt: { type: Date },
+      reopenedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      reopenedByName: { type: String, default: "" },
+      role: { type: String, default: "" },
+      reason: { type: String, default: "" },
     },
-    resolutionNote: {
-      type: String,
-      default: "",
+
+    // Citizen Feedback (Post-Resolution)
+    citizenFeedback: {
+      submittedAt: { type: Date },
+      rating: { type: Number, min: 1, max: 5 },
+      comment: { type: String, default: "" },
     },
-    updatedByOfficer: {
-      type: String,
-      default: "",
-    },
+
+    // Legacy fields for backward compatibility
+    officerRemarks: { type: String, default: "" },
+    actionTaken: { type: String, default: "" },
+    expectedResolutionDate: { type: String, default: "" },
+    resolutionImage: { type: String, default: "" },
+    resolutionNote: { type: String, default: "" },
+    updatedByOfficer: { type: String, default: "" },
+
+    // Metrics & Community
     views: {
       type: Number,
-      default: 125,
+      default: 1,
     },
     likes: [
       {
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         createdAt: { type: Date, default: Date.now },
-      },
-    ],
-    aiSeverity: {
-      type: String,
-      enum: ["Low", "Medium", "High", "Critical"],
-      default: "Medium",
-    },
-    aiPriorityScore: {
-      type: Number,
-      default: 75,
-    },
-    aiEstimatedDays: {
-      type: Number,
-      default: 3,
-    },
-    aiTags: [
-      {
-        type: String,
       },
     ],
     upvotes: [
@@ -156,31 +241,42 @@ const issueSchema = new mongoose.Schema(
         createdAt: { type: Date, default: Date.now },
       },
     ],
+
+    // Comprehensive Audit Timeline
     timeline: [
       {
-        status: String,
-        note: String,
-        updatedBy: { type: String, default: "System / AI" },
+        status: { type: String, required: true },
+        note: { type: String, required: true },
+        updatedBy: { type: String, default: "System" },
+        role: { type: String, default: "system" },
         date: { type: Date, default: Date.now },
       },
     ],
-    assignedDept: {
+
+    // AI Classification
+    aiSeverity: {
       type: String,
-      default: "Municipal Public Works Department",
+      enum: ["Low", "Medium", "High", "Critical"],
+      default: "Medium",
     },
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
+    aiPriorityScore: {
+      type: Number,
+      default: 75,
     },
-    reportedDate: {
-      type: Date,
-      default: Date.now,
+    aiEstimatedDays: {
+      type: Number,
+      default: 3,
     },
+    aiTags: [{ type: String }],
   },
   {
     timestamps: true,
   }
 );
+
+// Compound indexes for lightning-fast filtered role queries
+issueSchema.index({ wardId: 1, status: 1 });
+issueSchema.index({ assignedDept: 1, status: 1 });
+issueSchema.index({ user: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Issue", issueSchema);

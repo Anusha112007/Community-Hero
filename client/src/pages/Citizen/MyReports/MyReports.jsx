@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FiSearch, FiTrash2, FiClock, FiMapPin, FiPlusCircle, 
-  FiCheckCircle, FiActivity, FiChevronRight, FiAlertCircle, FiArrowRight
+  FiCheckCircle, FiActivity, FiChevronRight, FiAlertCircle, FiArrowRight, FiShield
 } from 'react-icons/fi';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { useLanguage } from '../../../context/LanguageContext';
 import './MyReports.css';
@@ -18,276 +18,169 @@ export default function MyReports() {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const loadReports = async () => {
-      setLoading(true);
-      let combined = [];
-
-      // 1. Load locally saved reports submitted by user
-      try {
-        const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-        combined = [...local];
-      } catch (e) {
-        console.error("Local storage error:", e);
+  const loadReports = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/issues/my-reports');
+      if (res.data && Array.isArray(res.data)) {
+        const mapped = res.data.map(item => ({
+          id: item.complaintId || item._id,
+          _id: item._id,
+          complaintId: item.complaintId || item._id,
+          title: item.title,
+          category: item.category,
+          status: item.status || 'Submitted',
+          priority: item.priority || item.aiSeverity || 'High',
+          location: item.location,
+          ward: item.wardName || item.wardId || 'Ward 4',
+          assignedDept: item.assignedDept || 'Roads & Infrastructure Department',
+          image: item.image || `https://picsum.photos/seed/${item._id}/400/300`,
+          date: new Date(item.createdAt || item.reportedDate || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        }));
+        setReports(mapped);
       }
-
-      // 2. Load API reports if authenticated
-      if (token) {
-        try {
-          const res = await axios.get('http://localhost:5000/api/issues/my-reports', {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          if (res.data && res.data.length > 0) {
-            const apiMapped = res.data.map(item => ({
-              id: item._id,
-              _id: item._id,
-              title: item.title,
-              category: item.category,
-              status: item.status || 'Reported',
-              priority: item.aiSeverity || 'High',
-              location: item.location,
-              image: item.image || `https://picsum.photos/seed/${item.id || item._id || 'myreport'}/400/300`,
-              date: new Date(item.createdAt || item.reportedDate || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-            }));
-
-            const existingIds = new Set(combined.map(r => r.id));
-            apiMapped.forEach(item => {
-              if (!existingIds.has(item.id)) {
-                combined.push(item);
-              }
-            });
-          }
-        } catch (err) {
-          console.error("Fetch my reports error:", err);
-        }
-      }
-
-      setReports(combined);
+    } catch (err) {
+      console.error("Error fetching my reports:", err);
+    } finally {
       setLoading(false);
-    };
-
-    loadReports();
-  }, [token]);
-
-  const handleDelete = async (id) => {
-    if (window.confirm(t('deleteReportConfirm'))) {
-      const updated = reports.filter(r => r.id !== id && r._id !== id);
-      setReports(updated);
-      try {
-        const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-        const filteredLocal = local.filter(r => r.id !== id && r._id !== id);
-        localStorage.setItem('my_submitted_reports', JSON.stringify(filteredLocal));
-      } catch (e) {
-        console.error("Delete local storage error:", e);
-      }
-
-      if (token && id) {
-        try {
-          await axios.delete(`http://localhost:5000/api/issues/${id}`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-        } catch (apiErr) {
-          // If already deleted or local-only, ignore
-        }
-      }
     }
   };
 
-  const getProgressPercentage = (status) => {
-    if (status === 'Resolved' || status === 'Solved') return 100;
-    if (status === 'In Progress' || status === 'Assigned') return 60;
-    if (status === 'Under Review') return 30;
-    return 15;
-  };
+  useEffect(() => {
+    loadReports();
+  }, [token]);
 
+  // Filter Reports
   const filteredReports = reports.filter(r => {
-    const titleMatch = (r.title || '').toLowerCase().includes(searchTerm.toLowerCase());
-    const locMatch = (r.location || '').toLowerCase().includes(searchTerm.toLowerCase());
-    const catMatch = (r.category || '').toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesSearch = titleMatch || locMatch || catMatch;
-    const matchesStatus = statusFilter === 'All' || r.status === statusFilter;
+    const matchesSearch = 
+      (r.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.category || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.complaintId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.location || '').toLowerCase().includes(searchTerm.toLowerCase());
+
+    let matchesStatus = true;
+    if (statusFilter !== 'All') {
+      const s = (r.status || '').toLowerCase();
+      if (statusFilter === 'Pending') {
+        matchesStatus = s.includes('submit') || s.includes('ward') || s.includes('under review') || s.includes('report') || s.includes('unsolved');
+      } else if (statusFilter === 'In Progress') {
+        matchesStatus = s.includes('progress') || s.includes('assigned');
+      } else if (statusFilter === 'Resolved') {
+        matchesStatus = s.includes('resolv') || s.includes('solved');
+      } else if (statusFilter === 'Rejected') {
+        matchesStatus = s.includes('reject');
+      } else {
+        matchesStatus = s === statusFilter.toLowerCase();
+      }
+    }
+
     return matchesSearch && matchesStatus;
   });
 
-  const myTotal = reports.length;
-  const myInProgress = reports.filter(r => r.status === 'In Progress' || r.status === 'Under Review').length;
-  const myResolved = reports.filter(r => r.status === 'Resolved' || r.status === 'Solved').length;
+  const getStatusBadgeClass = (status) => {
+    const s = (status || '').toLowerCase();
+    if (s.includes('resolv') || s.includes('solved')) return 'badge-solved';
+    if (s.includes('progress') || s.includes('assigned') || s.includes('complet')) return 'badge-in-progress';
+    if (s.includes('reject')) return 'badge-rejected';
+    return 'badge-unsolved';
+  };
 
   return (
-    <div className="my-reports-clean-page">
-      {/* 1. CLEAN HERO HEADER */}
-      <header className="reports-clean-header">
-        <div className="reports-header-text">
-          <span className="reports-eyebrow">
-            👤 {language === 'te' ? 'మీ ఖాతా కార్యకలాపాలు' : language === 'hi' ? 'आपकी गतिविधियाँ' : 'Citizen Portfolio'}
-          </span>
-          <h1>{t('myReportsTitle')}</h1>
-          <p>
-            {language === 'te' 
-              ? 'మీరు నివేదించిన సమస్యల పరిష్కార పురోగతి మరియు అధికారుల చర్యలను ఇక్కడ ట్రాక్ చేయండి.'
-              : language === 'hi'
-              ? 'आपके द्वारा दर्ज की गई समस्याओं की लाइव प्रगति और स्थिति यहां देखें।'
-              : 'Track live progress, municipal verification, and field repairs for all issues you reported.'}
+    <div className="my-reports-page animate-fade-in">
+      <div className="reports-top-header">
+        <div>
+          <h1 className="page-heading">My Submitted Complaints</h1>
+          <p className="page-subheading">
+            Track the real-time progress of civic issues you have reported.
           </p>
         </div>
-
         <button className="btn-new-report" onClick={() => navigate('/report-issue')}>
-          <FiPlusCircle /> {t('bannerReportBtn')}
+          <FiPlusCircle /> Report New Issue
         </button>
-      </header>
-
-      {/* 2. MINIMAL 3-STAT STRIP */}
-      <div className="reports-stats-strip">
-        <div className="report-stat-pill">
-          <span className="stat-indicator blue" />
-          <div className="stat-text-group">
-            <strong>{myTotal}</strong>
-            <span>{t('kpiReported')}</span>
-          </div>
-        </div>
-
-        <div className="stat-sep" />
-
-        <div className="report-stat-pill">
-          <span className="stat-indicator orange" />
-          <div className="stat-text-group">
-            <strong>{myInProgress}</strong>
-            <span>{t('kpiInProgress')}</span>
-          </div>
-        </div>
-
-        <div className="stat-sep" />
-
-        <div className="report-stat-pill">
-          <span className="stat-indicator green" />
-          <div className="stat-text-group">
-            <strong>{myResolved}</strong>
-            <span>{t('kpiResolved')}</span>
-          </div>
-        </div>
       </div>
 
-      {/* 3. SLEEK SEARCH & PILL FILTER TABS */}
+      {/* Filter and Search Bar */}
       <div className="reports-filter-bar">
-        <div className="reports-search-box">
+        <div className="search-box">
           <FiSearch className="search-icon" />
           <input 
             type="text" 
-            placeholder={t('searchMyReportsPlaceholder')} 
+            placeholder="Search by Complaint ID, title, or location..." 
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
 
-        <div className="status-filter-pills">
-          <button 
-            type="button"
-            className={`filter-pill ${statusFilter === 'All' ? 'active' : ''}`}
-            onClick={() => setStatusFilter('All')}
-          >
-            {t('allStatuses')} ({myTotal})
-          </button>
-          <button 
-            type="button"
-            className={`filter-pill ${statusFilter === 'Reported' ? 'active' : ''}`}
-            onClick={() => setStatusFilter('Reported')}
-          >
-            {t('statusReported')} ({reports.filter(r => r.status === 'Reported').length})
-          </button>
-          <button 
-            type="button"
-            className={`filter-pill ${statusFilter === 'In Progress' ? 'active' : ''}`}
-            onClick={() => setStatusFilter('In Progress')}
-          >
-            {t('statusInProgress')} ({myInProgress})
-          </button>
-          <button 
-            type="button"
-            className={`filter-pill ${statusFilter === 'Resolved' ? 'active' : ''}`}
-            onClick={() => setStatusFilter('Resolved')}
-          >
-            {t('statusResolved')} ({myResolved})
-          </button>
+        <div className="filter-group">
+          {['All', 'Pending', 'In Progress', 'Resolved', 'Rejected'].map((status) => (
+            <button 
+              key={status}
+              className={`filter-btn ${statusFilter === status ? 'active' : ''}`}
+              onClick={() => setStatusFilter(status)}
+            >
+              {status}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* 4. CLEAN CARD FEED (NO CLUMSY TABLE) */}
-      <div className="reports-feed-container">
-        {loading ? (
-          <div className="reports-empty-box">
-            <p>Loading your reports...</p>
-          </div>
-        ) : filteredReports.length === 0 ? (
-          <div className="reports-empty-box">
-            <FiAlertCircle size={40} style={{ color: '#94A3B8', marginBottom: '8px' }} />
-            <h3>{t('noMyReports')}</h3>
-            <p>
-              {language === 'te' 
-                ? 'మీరు ఇంకా ఏ సమస్యనూ నివేదించలేదు లేదా ఫిల్టర్‌కు సరిపోయే రిపోర్టులు లేవు.' 
-                : language === 'hi' 
-                ? 'आपने अभी तक कोई समस्या दर्ज नहीं की है।' 
-                : 'You have not reported any issues yet, or none match the active filter.'}
-            </p>
-            <button className="btn-new-report" onClick={() => navigate('/report-issue')}>
-              <FiPlusCircle /> {t('bannerReportBtn')}
-            </button>
-          </div>
-        ) : (
-          <div className="reports-cards-list">
-            {filteredReports.map((rep) => {
-              const progressPct = getProgressPercentage(rep.status);
+      {/* Reports List */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '60px', color: '#64748B' }}>
+          <FiActivity className="animate-spin" style={{ fontSize: '2rem', color: '#EA580C', marginBottom: '12px' }} />
+          <p>Loading your complaint history from municipal database...</p>
+        </div>
+      ) : filteredReports.length === 0 ? (
+        <div className="empty-reports-card">
+          <FiAlertCircle className="empty-icon" />
+          <h3>No complaints found</h3>
+          <p>You haven't filed any complaints matching this filter.</p>
+          <button className="btn-new-report" onClick={() => navigate('/report-issue')}>
+            <FiPlusCircle /> Submit a Civic Complaint
+          </button>
+        </div>
+      ) : (
+        <div className="reports-grid">
+          {filteredReports.map((report) => (
+            <div key={report.id || report._id} className="report-card">
+              <div className="report-card-image-wrap">
+                <img src={report.image} alt={report.title} className="report-card-image" />
+                <span className={`report-status-badge ${getStatusBadgeClass(report.status)}`}>
+                  {report.status}
+                </span>
+              </div>
 
-              return (
-                <div key={rep.id || rep._id} className="report-item-card">
-                  {/* Image Thumbnail */}
-                  <div className="report-card-image">
-                    <img src={rep.image} alt={rep.title} />
-                  </div>
-
-                  {/* Body Content */}
-                  <div className="report-card-body">
-                    <div className="report-card-headline">
-                      <h3>{rep.title}</h3>
-                      <div className="report-badge-cluster">
-                        <span className={`clean-status-pill ${
-                          rep.status === 'Resolved' || rep.status === 'Solved' ? 'resolved' :
-                          rep.status === 'In Progress' ? 'in-progress' : 'pending'
-                        }`}>
-                          {rep.status === 'Resolved' || rep.status === 'Solved' ? `🟢 ${t('statusResolved')}` :
-                           rep.status === 'In Progress' ? `🔵 ${t('statusInProgress')}` : `🟠 ${t('statusReported')}`}
-                        </span>
-                        <span className="report-category-pill">{rep.category}</span>
-                      </div>
-                    </div>
-
-                    <div className="report-meta-row">
-                      <span>{rep.date}</span>
-                      <span className="meta-dot">•</span>
-                      <span className="meta-loc">{rep.location}</span>
-                    </div>
-                  </div>
-
-                  {/* Actions Column */}
-                  <div className="report-card-actions">
-                    <Link to={`/track-report/${rep.id || rep._id}`} className="btn-clean-track-icon" title={t('trackDetails')}>
-                      <FiArrowRight />
-                    </Link>
-
-                    <button 
-                      type="button"
-                      onClick={() => handleDelete(rep.id || rep._id)} 
-                      className="btn-delete-action-icon"
-                      title="Delete Report"
-                    >
-                      <FiTrash2 />
-                    </button>
-                  </div>
+              <div className="report-card-body">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span className="report-id-text">#{report.complaintId || report.id}</span>
+                  <span className="report-category-text">{report.category}</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+
+                <h3 className="report-card-title">{report.title}</h3>
+                <p className="report-card-loc">
+                  <FiMapPin /> {report.location}
+                </p>
+
+                <div style={{ fontSize: '0.8rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: '6px', margin: '8px 0' }}>
+                  <FiShield style={{ color: '#EA580C' }} /> Ward: <strong>{report.ward}</strong>
+                </div>
+
+                <div className="report-card-footer">
+                  <span className="report-date-text">
+                    <FiClock /> {report.date}
+                  </span>
+                  <button 
+                    className="btn-track-action"
+                    onClick={() => navigate(`/track-report/${report.complaintId || report._id}`)}
+                  >
+                    Track Progress <FiArrowRight />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

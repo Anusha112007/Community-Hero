@@ -19,6 +19,16 @@ export default function ReportIssue() {
 
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState('Road Damage');
+  const [selectedWard, setSelectedWard] = useState(user?.wardId || 'WARD-04');
+  const WARDS_LIST = [
+    { id: 'WARD-04', name: 'Duvvada Ward 4 (Visakhapatnam)' },
+    { id: 'WARD-01', name: 'Madhurawada Ward 1 (Visakhapatnam)' },
+    { id: 'WARD-02', name: 'MVP Colony Ward 2 (Visakhapatnam)' },
+    { id: 'WARD-03', name: 'Gajuwaka Ward 3 (Visakhapatnam)' },
+    { id: 'WARD-05', name: 'Steel Plant Township Ward 5 (Visakhapatnam)' },
+    { id: 'WARD-06', name: 'NAD Junction Ward 6 (Visakhapatnam)' },
+    { id: 'THONDANGI-01', name: 'Tuni Rural - Pydikonda (Kakinada)' },
+  ];
 
   // Dynamic citizen locality default
   const userLocStr = `${user?.village || ''} ${user?.mandal || ''} ${user?.wardName || ''} ${user?.municipality || ''}`.toLowerCase();
@@ -335,12 +345,19 @@ export default function ReportIssue() {
       createdAt: new Date().toISOString()
     };
 
+    const chosenWardObj = WARDS_LIST.find((w) => w.id === selectedWard) || {
+      id: selectedWard,
+      name: user?.wardName || 'Duvvada Ward 4',
+    };
+
     try {
       const payload = {
         title: newReport.title,
         category: newReport.category,
         description: newReport.description,
         location: newReport.location,
+        wardId: chosenWardObj.id,
+        wardName: chosenWardObj.name,
         latitude: locationCoords.latitude,
         longitude: locationCoords.longitude,
         locationCoords: { lat: locationCoords.latitude, lng: locationCoords.longitude },
@@ -353,26 +370,19 @@ export default function ReportIssue() {
       };
 
       const res = await api.post('/issues', payload);
-      if (res.data && (res.data._id || res.data.id)) {
-        const returnedId = res.data._id || res.data.id;
-        newReport._id = returnedId;
+      if (res.data) {
+        const returnedId = res.data.complaintId || res.data._id || res.data.id;
+        newReport._id = res.data._id || returnedId;
         newReport.id = returnedId;
+        newReport.complaintId = res.data.complaintId || returnedId;
+        setSubmittedReportId(returnedId);
       }
     } catch (err) {
-      console.warn("API submit issue warning (resilient offline fallback active):", err);
-      // Even if server is temporarily unreachable, citizen's report is saved locally and submitted
-    } finally {
-      // Always store locally so MyReports, TrackReport, and Dashboards show it instantly!
-      try {
-        const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-        const updatedLocal = [newReport, ...local.filter(r => r.id !== newReport.id && r._id !== newReport._id)];
-        localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-      } catch (storageErr) {
-        console.error("Local storage error:", storageErr);
-      }
+      console.error("API submit issue error:", err);
+      setSubmitError(err.response?.data?.message || err.message || "Submission failed");
     }
 
-    setSubmittedReportId(newReport.id);
+    setSubmittedReportId(newReport.complaintId || newReport.id);
     setIsSubmitting(false);
     setCurrentStep(4);
   };
@@ -508,6 +518,34 @@ export default function ReportIssue() {
               <span>Latitude: {locationCoords.latitude?.toFixed(6)}</span>
               <span>Longitude: {locationCoords.longitude?.toFixed(6)}</span>
             </div>
+          </div>
+
+          {/* Municipal Ward Jurisdiction Selector */}
+          <div className="guided-form-group">
+            <label style={{ fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+              <FiShield style={{ color: '#EA580C' }} /> Municipal Ward Jurisdiction
+            </label>
+            <select
+              value={selectedWard}
+              onChange={(e) => setSelectedWard(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '12px 14px',
+                borderRadius: '10px',
+                border: '1.5px solid #CBD5E1',
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                color: '#1E293B',
+                background: '#FFFFFF',
+                marginBottom: '16px'
+              }}
+            >
+              {WARDS_LIST.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Title Input with Voice Dictation */}

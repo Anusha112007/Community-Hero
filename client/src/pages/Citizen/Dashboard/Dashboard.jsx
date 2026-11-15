@@ -4,7 +4,7 @@ import {
   FiPhoneCall, FiAlertTriangle, FiDroplet, FiTrash2, FiSun, FiShield, FiThumbsUp, FiZap, FiUser, FiArrowRight
 } from 'react-icons/fi';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { useLanguage } from '../../../context/LanguageContext';
 import './Dashboard.css';
@@ -74,7 +74,7 @@ export default function Dashboard() {
 
       // 2. Fetch live reports from API
       try {
-        const res = await axios.get('http://localhost:5000/api/issues');
+        const res = await api.get('/issues');
         if (res.data && Array.isArray(res.data) && res.data.length > 0) {
           const apiMapped = res.data.map((item, idx) => ({
             id: item._id,

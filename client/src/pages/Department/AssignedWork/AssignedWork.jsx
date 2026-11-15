@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FaSearch, FaEye, FaCheckCircle, FaPlay, FaMapMarkerAlt, FaSync } from 'react-icons/fa';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { AcceptWorkModal, ViewDetailsModal } from '../../../components/Common/DepartmentModals';
 
@@ -14,54 +14,34 @@ export default function AssignedWork() {
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState('');
 
+  const departmentName = user?.departmentName || 'Roads & Infrastructure Department';
+
   const loadAssignedWorks = async () => {
     setLoading(true);
     try {
-      let apiIssues = [];
-      try {
-        const res = await axios.get('http://localhost:5000/api/issues');
-        if (res.data && Array.isArray(res.data)) apiIssues = res.data;
-      } catch (e) { console.error(e); }
-
-      let localReports = [];
-      try {
-        localReports = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      } catch (e) { console.error(e); }
-
-      const mapById = new Map();
-      [...apiIssues, ...localReports].forEach(item => {
-        const key = item._id || item.id;
-        if (key) mapById.set(key, item);
-      });
-
-      const merged = Array.from(mapById.values());
-
-      const mapped = merged
-        .filter(item => {
-          const s = (item.status || '').toUpperCase();
-          return s === 'ASSIGNED' || s === 'REPORTED' || s === 'UNSOLVED' || s === 'UNDER REVIEW'; // Show everything pending department action
-        })
-        .map(item => ({
-        id: item._id || item.id,
-        _id: item._id || item.id,
-        title: item.title,
-        description: item.description,
-        category: item.category,
-        priority: item.priority || item.aiSeverity || 'High',
-        ward: item.wardId || item.wardName || 'Ward 4',
-        department: item.assignedDepartment || item.assignedDept || 'Public Works Department',
-        assignedDate: new Date(item.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        expectedCompletion: item.expectedResolutionDate || 'In 2 Days',
-        currentStatus: item.status || 'Assigned',
-        progress: item.progress || (item.status === 'Resolved' ? 100 : item.status === 'In Progress' ? 50 : 15),
-        image: item.image || item.imageUrl || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
-        location: item.location,
-        locationCoords: item.locationCoords,
-        aiTags: item.aiTags || [],
-        timeline: item.timeline || []
-      }));
-
-      setWorks(mapped);
+      const res = await api.get(`/issues/department/${encodeURIComponent(departmentName)}?status=incoming`);
+      if (res.data && Array.isArray(res.data)) {
+        const mapped = res.data.map(item => ({
+          id: item.complaintId || item._id,
+          _id: item._id,
+          title: item.title,
+          description: item.description,
+          category: item.category,
+          priority: item.priority || item.aiSeverity || 'High',
+          ward: item.wardName || item.wardId || 'Ward 4',
+          department: item.assignedDept || departmentName,
+          assignedDate: new Date(item.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          expectedCompletion: item.expectedResolutionDate || 'In 2 Days',
+          currentStatus: item.status || 'Forwarded to Department',
+          progress: item.progress || 10,
+          image: item.image || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
+          location: item.location,
+          locationCoords: item.locationCoords,
+          aiTags: item.aiTags || [],
+          timeline: item.timeline || []
+        }));
+        setWorks(mapped);
+      }
     } catch (err) {
       console.error('Error loading assigned works:', err);
     } finally {
@@ -71,7 +51,7 @@ export default function AssignedWork() {
 
   useEffect(() => {
     loadAssignedWorks();
-  }, []);
+  }, [departmentName]);
 
   const showFeedback = (msg) => {
     setFeedbackMsg(msg);
@@ -80,67 +60,32 @@ export default function AssignedWork() {
 
   const handleAcceptWork = async (id) => {
     try {
-      await axios.put(`http://localhost:5000/api/issues/${id}/department-progress`, {
-        action: 'accept',
-        remarks: `Work order accepted by ${user?.name || 'Department Supervisor'}. Field crew scheduled.`,
-        updatedBy: user?.name || 'Department Officer'
+      await api.put(`/issues/${id}/department-assign`, {
+        assignedStaff: user?.name || 'Department Supervisor',
+        assignedTeam: 'Field Operations Crew',
+        priority: 'High',
+        workInstructions: 'Work order accepted by Department. Crew deployed on-site.',
       });
+      showFeedback(`Work order #${id} accepted! Status updated to Work Assigned.`);
+      loadAssignedWorks();
     } catch (err) {
-      console.error('API update failed, continuing with local storage:', err);
+      console.error('API update failed:', err);
+      showFeedback(err.response?.data?.message || 'Assignment failed');
     }
-
-    try {
-      const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      const updatedLocal = local.map(item => {
-        if (item.id === id || item._id === id) {
-          return { ...item, status: 'IN PROGRESS', progress: 30, actionTaken: `Accepted by Department. Field crew scheduled.` };
-        }
-        return item;
-      });
-      localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-    } catch (e) {
-      console.error("Local sync error:", e);
-    }
-
-    setWorks(prev => prev.map(w => (w.id === id || w._id === id) ? { ...w, currentStatus: 'IN PROGRESS', progress: 30 } : w));
-    showFeedback(`Work order #${id} accepted! Status updated to In Progress.`);
-    
-    // Remove it from assigned view as it is now technically In Progress
-    setTimeout(() => {
-      setWorks(prev => prev.filter(w => w.id !== id && w._id !== id));
-    }, 1500);
   };
 
   const handleStartWork = async (id) => {
     try {
-      await axios.put(`http://localhost:5000/api/issues/${id}/department-progress`, {
-        action: 'start',
-        remarks: 'Repair equipment and field specialists deployed on site.',
-        updatedBy: user?.name || 'Field Operations Lead'
+      await api.put(`/issues/${id}/department-progress`, {
+        progress: 25,
+        progressNotes: 'Repair equipment and field specialists deployed on site. Work in progress.',
       });
+      showFeedback(`Work initiated for #${id}! Progress updated on citizen tracking timeline.`);
+      loadAssignedWorks();
     } catch (err) {
-      console.error('API update failed, continuing with local storage:', err);
+      console.error('API update failed:', err);
+      showFeedback(err.response?.data?.message || 'Update failed');
     }
-
-    try {
-      const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      const updatedLocal = local.map(item => {
-        if (item.id === id || item._id === id) {
-          return { ...item, status: 'IN PROGRESS', progress: 50, actionTaken: 'Work Started. Specialists deployed on site.' };
-        }
-        return item;
-      });
-      localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-    } catch (e) {
-      console.error("Local sync error:", e);
-    }
-
-    setWorks(prev => prev.map(w => (w.id === id || w._id === id) ? { ...w, currentStatus: 'IN PROGRESS', progress: 50 } : w));
-    showFeedback(`Work initiated for #${id}! Progress updated on citizen tracking timeline.`);
-    
-    setTimeout(() => {
-      setWorks(prev => prev.filter(w => w.id !== id && w._id !== id));
-    }, 1500);
   };
 
   const filtered = works.filter(w => {

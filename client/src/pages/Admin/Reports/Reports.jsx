@@ -1,153 +1,170 @@
-import React from 'react';
-import { FaFilePdf, FaFileExcel, FaPrint, FaChartBar, FaChartPie, FaChartArea } from 'react-icons/fa';
-import { dummyReports } from '../../../services/dummyData';
+import React, { useState, useEffect } from 'react';
+import { FaFilePdf, FaFileExcel, FaPrint, FaChartBar, FaChartPie, FaSync, FaShieldAlt, FaClock, FaCheckCircle } from 'react-icons/fa';
+import api from '../../../services/api';
 import '../AdminStyles.css';
 
 export default function Reports() {
+  const [reportData, setReportData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadReports = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/admin/reports');
+      if (res.data && res.data.success) {
+        setReportData(res.data);
+      }
+    } catch (err) {
+      console.error('Error fetching admin reports:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadReports();
+  }, []);
+
+  const exportCSV = () => {
+    if (!reportData) return;
+    const rows = [
+      ['Department / Metric', 'Total Issues', 'Resolved', 'Active', 'Efficiency %'],
+      ...(reportData.departments || []).map(d => [d.name, d.totalIssues, d.resolvedIssues, d.activeIssues, `${d.efficiencyScore}%`]),
+      [],
+      ['Ward', 'Ward Name', 'Total Issues', 'Open Issues', 'Resolved Issues', 'Efficiency %'],
+      ...(reportData.wards || []).map(w => [w.wardId, w.wardName, w.totalIssues, w.openIssues, w.resolvedIssues, `${w.efficiencyScore}%`])
+    ];
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.join(',')).join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `municipal_report_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const printSummary = () => {
+    window.print();
+  };
+
+  const summary = reportData?.summary || {
+    resolutionRate: 0,
+    avgResolutionDays: 0,
+    today: { newIssues: 0, resolved: 0 },
+    weekly: { newIssues: 0, resolved: 0 },
+    monthly: { newIssues: 0, resolved: 0 },
+    yearly: { newIssues: 0, resolved: 0 }
+  };
+
   return (
     <div className="admin-page-container">
       {/* Top Header */}
       <div className="admin-top-header">
         <div className="admin-header-title">
-          <h1>Reports & Analytics</h1>
-          <p>Generate comprehensive civic resolution summaries, departmental metrics, and performance analytics.</p>
+          <h1>Civic Reports & Performance Analytics</h1>
+          <p>Real-time municipal performance analytics, department turnaround times, and resolution summaries.</p>
         </div>
         <div className="admin-header-actions">
-          <button className="admin-btn-secondary" onClick={() => alert('Exporting PDF... (UI Only)')}>
-            <FaFilePdf style={{ color: '#EF4444' }} /> Export PDF
+          <button className="admin-btn-secondary" onClick={exportCSV}>
+            <FaFileExcel style={{ color: '#10B981' }} /> Export CSV
           </button>
-          <button className="admin-btn-secondary" onClick={() => alert('Exporting Excel... (UI Only)')}>
-            <FaFileExcel style={{ color: '#10B981' }} /> Export Excel
-          </button>
-          <button className="admin-btn-primary" onClick={() => alert('Printing Report... (UI Only)')}>
+          <button className="admin-btn-primary" onClick={printSummary}>
             <FaPrint /> Print Summary
+          </button>
+          <button className="admin-refresh-btn" onClick={loadReports}>
+            <FaSync className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
 
       {/* KPI Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
         <div className="admin-grid-card" style={{ padding: '20px' }}>
           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Today's Volume</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0F172A', margin: '6px 0' }}>{dummyReports.today.newIssues} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>New</span></div>
+          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0F172A', margin: '6px 0' }}>
+            {summary.today.newIssues} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>New</span>
+          </div>
           <div style={{ fontSize: '0.8rem', color: '#16A34A', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-            ✓ {dummyReports.today.resolved} Resolved today
+            ✓ {summary.today.resolved} Resolved today
           </div>
         </div>
 
         <div className="admin-grid-card" style={{ padding: '20px' }}>
           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Weekly Volume</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0F172A', margin: '6px 0' }}>{dummyReports.weekly.newIssues} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>New</span></div>
+          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0F172A', margin: '6px 0' }}>
+            {summary.weekly.newIssues} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>New</span>
+          </div>
           <div style={{ fontSize: '0.8rem', color: '#16A34A', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-            ✓ {dummyReports.weekly.resolved} Resolved this week
+            ✓ {summary.weekly.resolved} Resolved this week
           </div>
         </div>
 
         <div className="admin-grid-card" style={{ padding: '20px' }}>
           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Monthly Volume</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0F172A', margin: '6px 0' }}>{dummyReports.monthly.newIssues} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>New</span></div>
+          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0F172A', margin: '6px 0' }}>
+            {summary.monthly.newIssues} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>New</span>
+          </div>
           <div style={{ fontSize: '0.8rem', color: '#16A34A', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-            ✓ {dummyReports.monthly.resolved} Resolved this month
+            ✓ {summary.monthly.resolved} Resolved this month
           </div>
         </div>
 
         <div className="admin-grid-card" style={{ padding: '20px' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Yearly Volume</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0F172A', margin: '6px 0' }}>{dummyReports.yearly.newIssues} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>New</span></div>
-          <div style={{ fontSize: '0.8rem', color: '#16A34A', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-            ✓ {dummyReports.yearly.resolved} Resolved this year
+          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase' }}>Avg Resolution Speed</div>
+          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#EA580C', margin: '6px 0' }}>
+            {summary.avgResolutionDays} <span style={{ fontSize: '1rem', fontWeight: 600, color: '#64748B' }}>Days</span>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: '#EA580C', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <FaClock /> Platform turnaround time
           </div>
         </div>
       </div>
 
       {/* Visual Analytics Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
-        <div className="admin-grid-card" style={{ padding: '24px', height: '340px', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Issue Distribution</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+        {/* Department Performance */}
+        <div className="admin-grid-card" style={{ padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Department Resolution Efficiency</h3>
             <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#FFF7ED', color: '#EA580C', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #FED7AA' }}>
-              <FaChartPie />
-            </div>
-          </div>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '14px', padding: '16px 0' }}>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.825rem', fontWeight: 700, marginBottom: '4px' }}>
-                <span>Roads & Potholes</span> <span style={{ color: '#EA580C' }}>45%</span>
-              </div>
-              <div style={{ height: '8px', background: '#F1F5F9', borderRadius: '10px', overflow: 'hidden' }}>
-                <div style={{ width: '45%', height: '100%', background: 'linear-gradient(90deg, #FB923C, #EA580C)', borderRadius: '10px' }}></div>
-              </div>
-            </div>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.825rem', fontWeight: 700, marginBottom: '4px' }}>
-                <span>Sanitation & Waste</span> <span style={{ color: '#F59E0B' }}>30%</span>
-              </div>
-              <div style={{ height: '8px', background: '#F1F5F9', borderRadius: '10px', overflow: 'hidden' }}>
-                <div style={{ width: '30%', height: '100%', background: 'linear-gradient(90deg, #FDE68A, #F59E0B)', borderRadius: '10px' }}></div>
-              </div>
-            </div>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.825rem', fontWeight: 700, marginBottom: '4px' }}>
-                <span>Water Supply & Drainage</span> <span style={{ color: '#10B981' }}>25%</span>
-              </div>
-              <div style={{ height: '8px', background: '#F1F5F9', borderRadius: '10px', overflow: 'hidden' }}>
-                <div style={{ width: '25%', height: '100%', background: 'linear-gradient(90deg, #6EE7B7, #10B981)', borderRadius: '10px' }}></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="admin-grid-card" style={{ padding: '24px', height: '340px', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Department Performance</h3>
-            <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#F0FDF4', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #BBF7D0' }}>
               <FaChartBar />
             </div>
           </div>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', padding: '20px 0', borderBottom: '2px solid #FED7AA' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#EA580C' }}>88%</span>
-              <div style={{ width: '36px', height: '120px', background: 'linear-gradient(180deg, #FB923C 0%, #EA580C 100%)', borderRadius: '8px 8px 0 0' }}></div>
-              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B' }}>Roads</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#10B981' }}>94%</span>
-              <div style={{ width: '36px', height: '140px', background: 'linear-gradient(180deg, #34D399 0%, #10B981 100%)', borderRadius: '8px 8px 0 0' }}></div>
-              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B' }}>Waste</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#F59E0B' }}>76%</span>
-              <div style={{ width: '36px', height: '100px', background: 'linear-gradient(180deg, #FBBF24 0%, #D97706 100%)', borderRadius: '8px 8px 0 0' }}></div>
-              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B' }}>Power</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#EA580C' }}>91%</span>
-              <div style={{ width: '36px', height: '130px', background: 'linear-gradient(180deg, #F97316 0%, #C2410C 100%)', borderRadius: '8px 8px 0 0' }}></div>
-              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B' }}>Water</span>
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {(reportData?.departments || []).map((dept, i) => (
+              <div key={i}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.825rem', fontWeight: 700, marginBottom: '4px' }}>
+                  <span>{dept.name}</span> <span style={{ color: '#EA580C' }}>{dept.efficiencyScore}%</span>
+                </div>
+                <div style={{ height: '8px', background: '#F1F5F9', borderRadius: '10px', overflow: 'hidden' }}>
+                  <div style={{ width: `${dept.efficiencyScore}%`, height: '100%', background: 'linear-gradient(90deg, #FB923C, #EA580C)', borderRadius: '10px' }}></div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="admin-grid-card" style={{ padding: '24px', height: '340px', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Citizen Engagement Trend</h3>
-            <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#FFFBEB', color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #FDE68A' }}>
-              <FaChartArea />
+        {/* Ward Resolution Breakdown */}
+        <div className="admin-grid-card" style={{ padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Ward Performance Rankings</h3>
+            <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#F0FDF4', color: '#16A34A', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #BBF7D0' }}>
+              <FaChartPie />
             </div>
           </div>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '12px', padding: '16px 0' }}>
-            <div style={{ background: '#FFFBF7', border: '1px solid #FED7AA', borderRadius: '12px', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#78350F' }}>Active Citizen Heroes:</span>
-              <span style={{ fontSize: '1.15rem', fontWeight: 800, color: '#EA580C' }}>1,420+</span>
-            </div>
-            <div style={{ background: '#FFFBF7', border: '1px solid #FED7AA', borderRadius: '12px', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#78350F' }}>Average Resolution Time:</span>
-              <span style={{ fontSize: '1.15rem', fontWeight: 800, color: '#16A34A' }}>2.4 Days</span>
-            </div>
-            <div style={{ background: '#FFFBF7', border: '1px solid #FED7AA', borderRadius: '12px', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#78350F' }}>Citizen Satisfaction:</span>
-              <span style={{ fontSize: '1.15rem', fontWeight: 800, color: '#EA580C' }}>96.8%</span>
-            </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {(reportData?.wards || []).map((ward, i) => (
+              <div key={i}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.825rem', fontWeight: 700, marginBottom: '4px' }}>
+                  <span>{ward.wardName}</span> <span style={{ color: '#16A34A' }}>{ward.efficiencyScore}%</span>
+                </div>
+                <div style={{ height: '8px', background: '#F1F5F9', borderRadius: '10px', overflow: 'hidden' }}>
+                  <div style={{ width: `${ward.efficiencyScore}%`, height: '100%', background: 'linear-gradient(90deg, #86EFAC, #16A34A)', borderRadius: '10px' }}></div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FaSearch, FaEdit, FaCheckCircle, FaSync, FaMapMarkerAlt } from 'react-icons/fa';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { UpdateProgressModal, MarkCompletedModal } from '../../../components/Common/DepartmentModals';
 
@@ -17,47 +17,28 @@ export default function UpdateProgress() {
   const [completeModalOpen, setCompleteModalOpen] = useState(false);
   const [notification, setNotification] = useState('');
 
+  const departmentName = user?.departmentName || 'Roads & Infrastructure Department';
+
   const loadProgressWorks = async () => {
     setLoading(true);
     try {
-      let apiIssues = [];
-      try {
-        const res = await axios.get('http://localhost:5000/api/issues');
-        if (res.data && Array.isArray(res.data)) apiIssues = res.data;
-      } catch (e) { console.error(e); }
-
-      let localReports = [];
-      try {
-        localReports = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      } catch (e) { console.error(e); }
-
-      const mapById = new Map();
-      [...apiIssues, ...localReports].forEach(item => {
-        const key = item._id || item.id;
-        if (key) mapById.set(key, item);
-      });
-
-      const merged = Array.from(mapById.values());
-
-      // Filter active in-progress issues
-      const filteredActive = merged.filter(i => {
-        const s = (i.status || '').toUpperCase();
-        return s === 'IN PROGRESS';
-      }).map(item => ({
-        id: item._id || item.id,
-        _id: item._id || item.id,
-        title: item.title,
-        description: item.description,
-        department: item.assignedDepartment || item.assignedDept || 'Public Works Department',
-        category: item.category,
-        currentStatus: item.status || 'In Progress',
-        progress: item.progress || 50,
-        location: item.location,
-        priority: item.priority || 'High',
-        image: item.image || item.imageUrl || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
-      }));
-
-      setWorks(filteredActive);
+      const res = await api.get(`/issues/department/${encodeURIComponent(departmentName)}?status=ongoing`);
+      if (res.data && Array.isArray(res.data)) {
+        const mapped = res.data.map(item => ({
+          id: item.complaintId || item._id,
+          _id: item._id,
+          title: item.title,
+          description: item.description,
+          department: item.assignedDept || departmentName,
+          category: item.category,
+          currentStatus: item.status || 'Work In Progress',
+          progress: item.progress || 50,
+          location: item.location,
+          priority: item.priority || 'High',
+          image: item.image || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
+        }));
+        setWorks(mapped);
+      }
     } catch (err) {
       console.error('Error loading progress works:', err);
     } finally {
@@ -67,7 +48,7 @@ export default function UpdateProgress() {
 
   useEffect(() => {
     loadProgressWorks();
-  }, []);
+  }, [departmentName]);
 
   const showNotification = (msg) => {
     setNotification(msg);
@@ -76,66 +57,32 @@ export default function UpdateProgress() {
 
   const handleUpdateProgress = async (id, val, remarks) => {
     try {
-      await axios.put(`http://localhost:5000/api/issues/${id}/department-progress`, {
-        action: 'progress',
+      await api.put(`/issues/${id}/department-progress`, {
         progress: val,
-        remarks: remarks || `Progress milestone updated to ${val}%.`,
-        updatedBy: user?.name || 'Department Supervisor'
+        progressNotes: remarks || `Progress milestone updated to ${val}%.`,
       });
+      setWorks(prev => prev.map(w => (w.id === id || w._id === id) ? { ...w, progress: val } : w));
+      showNotification(`Milestone updated to ${val}% for #${id}!`);
+      loadProgressWorks();
     } catch (err) {
-      console.error('API update failed, continuing with local storage:', err);
+      console.error('API update failed:', err);
+      showNotification(err.response?.data?.message || 'Update failed');
     }
-
-    try {
-      const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      const updatedLocal = local.map(item => {
-        if (item.id === id || item._id === id) {
-          return { ...item, progress: val, actionTaken: remarks || `Progress milestone updated to ${val}%.` };
-        }
-        return item;
-      });
-      localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-    } catch (e) {
-      console.error("Local sync error:", e);
-    }
-
-    setWorks(prev => prev.map(w => (w.id === id || w._id === id) ? { ...w, progress: val } : w));
-    showNotification(`Milestone updated to ${val}% for #${id}!`);
   };
 
   const handleMarkCompleted = async (id, remarks) => {
     try {
-      await axios.put(`http://localhost:5000/api/issues/${id}/department-progress`, {
-        action: 'complete',
-        remarks: remarks || 'Field repairs finished and verified by department supervisor.',
-        resolutionImage: 'https://images.unsplash.com/photo-1541888946425-d0fbb186a5b7?auto=format&fit=crop&w=800&q=80',
-        updatedBy: user?.name || 'Department Lead'
+      await api.put(`/issues/${id}/department-complete`, {
+        completionRemarks: remarks || 'Field repairs finished and verified by department supervisor.',
+        beforeImage: selectedWork?.image || '',
+        afterImage: 'https://images.unsplash.com/photo-1541888946425-d0fbb186a5b7?auto=format&fit=crop&w=800&q=80',
       });
+      showNotification(`Work for #${id} completed and submitted for Admin verification!`);
+      loadProgressWorks();
     } catch (err) {
-      console.error('API update failed, continuing with local storage:', err);
+      console.error('API complete error:', err);
+      showNotification(err.response?.data?.message || 'Submission failed');
     }
-
-    try {
-      const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      const updatedLocal = local.map(item => {
-        if (item.id === id || item._id === id) {
-          return { 
-            ...item, 
-            status: 'RESOLVED', 
-            progress: 100, 
-            resolutionNote: remarks || 'Field repairs finished and verified by department supervisor.',
-            resolvedAt: new Date().toISOString()
-          };
-        }
-        return item;
-      });
-      localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-    } catch (e) {
-      console.error("Local sync error:", e);
-    }
-
-    setWorks(prev => prev.filter(w => w.id !== id && w._id !== id));
-    showNotification(`Ticket #${id} marked as Completed and Resolved! Archived in records.`);
   };
 
   const filtered = works.filter(w => {

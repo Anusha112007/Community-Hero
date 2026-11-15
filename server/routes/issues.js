@@ -2,123 +2,85 @@ const express = require("express");
 const mongoose = require("mongoose");
 const Issue = require("../models/Issue");
 const User = require("../models/User");
-const { protect } = require("../middleware/authMiddleware");
+const {
+  protect,
+  authorize,
+  normalizeRole,
+  checkWardAccess,
+  checkDepartmentAccess,
+} = require("../middleware/authMiddleware");
+const {
+  sendNotification,
+  notifyWardOfficers,
+  notifyDepartmentOfficers,
+  notifyAdmins,
+} = require("../utils/notify");
 
 const router = express.Router();
 
-// Initial sample seed data with rich coords, AI tags, and initial upvotes
-const SAMPLE_ISSUES = [
-  {
-    title: "Garbage Dump Near Community Center",
-    category: "Waste Management",
-    location: "Gajuwaka Main Road",
-    locationCoords: { lat: 17.6868, lng: 83.2185 },
-    status: "Reported",
-    aiSeverity: "High",
-    aiPriorityScore: 88,
-    aiEstimatedDays: 2,
-    aiTags: ["#PublicHealth", "#SanitationRisk", "#HighOdor"],
-    description: "Unattended heap of household waste accumulating near the entrance of the community center, causing severe foul odor and health risks to visitors and residents.",
-    image: "https://images.unsplash.com/photo-1530587191325-3db32d826c18?auto=format&fit=crop&w=800&q=80",
-    reportedDate: new Date("2026-07-24"),
-    assignedDept: "GVMC Waste Management Cell",
-  },
-  {
-    title: "Severe Pothole on Main Arterial Intersection",
-    category: "Roads",
-    location: "MVP Colony 5th Lane",
-    locationCoords: { lat: 17.7412, lng: 83.3312 },
-    status: "In Progress",
-    aiSeverity: "Critical",
-    aiPriorityScore: 95,
-    aiEstimatedDays: 1,
-    aiTags: ["#TrafficHazard", "#TwoWheelerDanger", "#MonsoonDamage"],
-    description: "Deep 8-inch pothole caused by heavy rainfall right at the busiest four-way junction. Poses severe crash risk for commuters during evening hours.",
-    image: "https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80",
-    reportedDate: new Date("2026-07-22"),
-    assignedDept: "Public Works Department (Roads Branch)",
-  },
-  {
-    title: "Burst Pipeline Leaking Clean Drinking Water",
-    category: "Water Supply",
-    location: "Madhurawada Sector 3",
-    locationCoords: { lat: 17.8012, lng: 83.3512 },
-    status: "Resolved",
-    aiSeverity: "High",
-    aiPriorityScore: 82,
-    aiEstimatedDays: 1,
-    aiTags: ["#WaterConservation", "#InfrastructureBurst", "#Resolved"],
-    description: "Underground main water pipeline burst leaking over 5,000 liters of clean drinking water daily onto the main road. Successfully repaired by municipal team.",
-    image: "https://images.unsplash.com/photo-1541888946425-d0fbb186a5b7?auto=format&fit=crop&w=800&q=80",
-    reportedDate: new Date("2026-07-18"),
-    assignedDept: "Water Supply & Sewerage Board",
-  },
-  {
-    title: "Unlit Streetlights Creating Dark Safety Corridor",
-    category: "Street Lights",
-    location: "Steel Plant Highway Outer Stretch",
-    locationCoords: { lat: 17.6512, lng: 83.1812 },
-    status: "Reported",
-    aiSeverity: "Medium",
-    aiPriorityScore: 70,
-    aiEstimatedDays: 3,
-    aiTags: ["#NightSafety", "#PedestrianZone", "#ElectricalFault"],
-    description: "A stretch of 6 consecutive high-mast street lights are out, creating a dark, unsafe corridor for shift workers and pedestrians at night.",
-    image: "https://images.unsplash.com/photo-1509114397022-ed747cca3f65?auto=format&fit=crop&w=800&q=80",
-    reportedDate: new Date("2026-07-25"),
-    assignedDept: "Electrical Maintenance Board",
-  },
-  {
-    title: "Overflowing Stormwater Drain Spilling Black Water",
-    category: "Drainage",
-    location: "NAD Junction Commercial Hub",
-    locationCoords: { lat: 17.7289, lng: 83.2514 },
-    status: "In Progress",
-    aiSeverity: "Critical",
-    aiPriorityScore: 91,
-    aiEstimatedDays: 2,
-    aiTags: ["#MonsoonOverflow", "#FootpathBlockage", "#CommercialRisk"],
-    description: "Clogged underground drainage channel overflowing onto the commercial walkway, halting pedestrian access and affecting local shopkeepers.",
-    image: "https://images.unsplash.com/photo-1584467735871-8e85353a8413?auto=format&fit=crop&w=800&q=80",
-    reportedDate: new Date("2026-07-21"),
-    assignedDept: "Drainage & Sewerage Wing",
-  },
-  {
-    title: "Open Hazardous Burning of Commercial Plastic",
-    category: "Public Safety",
-    location: "Kurmannapalem Vacant Plots",
-    locationCoords: { lat: 17.6321, lng: 83.1589 },
-    status: "Reported",
-    aiSeverity: "High",
-    aiPriorityScore: 86,
-    aiEstimatedDays: 2,
-    aiTags: ["#ToxicFumes", "#EnvironmentalHazard", "#IllegalBurning"],
-    description: "Open burning of commercial plastic packing waste occurring every evening, filling nearby apartment complexes with toxic black smoke.",
-    image: "https://images.unsplash.com/photo-1611284446314-60a55ac0d494?auto=format&fit=crop&w=800&q=80",
-    reportedDate: new Date("2026-07-26"),
-    assignedDept: "Environmental Protection Task Force",
-  },
-];
-
-// Helper to seed sample data if DB is empty (Disabled to allow clean fresh issue testing)
-const seedSampleIssuesIfEmpty = async () => {
-  // Disabled auto-seeding to keep database fresh and clean as requested by user
-  return;
+// Helper to generate unique complaint ID (e.g. CH-2026-10492)
+const generateComplaintId = () => {
+  const year = new Date().getFullYear();
+  const randomNum = Math.floor(10000 + Math.random() * 90000);
+  return `CH-${year}-${randomNum}`;
 };
 
-// @desc    Purge/Delete all issues from database
-// @route   DELETE /api/issues/purge-all
-// @access  Public
-router.delete("/purge-all", async (req, res) => {
-  try {
-    const result = await Issue.deleteMany({});
-    res.json({ message: "All issues removed successfully", deletedCount: result.deletedCount });
-  } catch (error) {
-    res.status(500).json({ message: "Error clearing issues", error: error.message });
-  }
-});
+// Helper to normalize any incoming category string
+const normalizeCategory = (cat) => {
+  if (!cat) return "Other";
+  const c = cat.trim();
+  const map = {
+    "Road Damage": "Roads",
+    "Roads": "Roads",
+    "Water Leakage": "Water Supply",
+    "Water Supply": "Water Supply",
+    "Garbage & Waste": "Waste Management",
+    "Waste Management": "Waste Management",
+    "Sanitation": "Waste Management",
+    "Streetlight": "Street Lights",
+    "Street Lights": "Street Lights",
+    "Drainage": "Drainage",
+    "Infrastructure": "Public Safety",
+    "Public Safety": "Public Safety",
+    "Electricity": "Electricity",
+    "Parks": "Parks",
+    "Other Issue": "Other",
+    "Other": "Other",
+  };
+  return map[c] || c;
+};
 
-// @desc    AI Intelligent Analysis endpoint using Google Gemini
+// Helper to find issue by either ObjectId or complaintId
+const findIssueByIdOrComplaintId = async (idParam) => {
+  if (!idParam) return null;
+  const cleanId = String(idParam).trim().replace(/^#+/, "");
+
+  if (mongoose.Types.ObjectId.isValid(cleanId)) {
+    const byMongoId = await Issue.findById(cleanId)
+      .populate("user", "name email points level title wardId wardName municipality phone")
+      .populate("verificationDetails.verifiedBy", "name role")
+      .populate("assignmentDetails.assignedBy", "name role")
+      .populate("completionDetails.completedBy", "name role")
+      .populate("adminReview.reviewedBy", "name role");
+    if (byMongoId) return byMongoId;
+  }
+
+  // Look up by complaintId (case-insensitive)
+  return await Issue.findOne({
+    $or: [
+      { complaintId: cleanId },
+      { complaintId: cleanId.toUpperCase() },
+      { complaintId: new RegExp(`^${cleanId}$`, "i") },
+    ],
+  })
+    .populate("user", "name email points level title wardId wardName municipality phone")
+    .populate("verificationDetails.verifiedBy", "name role")
+    .populate("assignmentDetails.assignedBy", "name role")
+    .populate("completionDetails.completedBy", "name role")
+    .populate("adminReview.reviewedBy", "name role");
+};
+
+// @desc    AI Intelligent Analysis endpoint
 // @route   POST /api/issues/ai-analyze
 // @access  Public
 const { GoogleGenAI } = require("@google/genai");
@@ -128,8 +90,6 @@ router.post("/ai-analyze", async (req, res) => {
     const { title = "", description = "", image = "" } = req.body;
 
     if (!process.env.GEMINI_API_KEY) {
-      console.warn("GEMINI_API_KEY not found in .env, falling back to mock analysis");
-      // Fallback mock logic if no API key is provided
       const text = `${title} ${description}`.toLowerCase();
       let category = "Other";
       let aiSeverity = "Medium";
@@ -186,21 +146,21 @@ router.post("/ai-analyze", async (req, res) => {
         aiEstimatedDays = 1;
         aiTags = ["#PowerGrid", "#ElectricalSafety", "#CivicUtility"];
       }
+
       return res.json({
         category,
         aiSeverity,
         aiPriorityScore,
         aiEstimatedDays,
         aiTags,
-        suggestedDept: `GVMC ${category} Task Force`,
+        suggestedDept: `${category} Department`,
       });
     }
 
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    
-    let parts = [];
-    parts.push({
-        text: `Analyze this community issue report.
+    const parts = [
+      {
+        text: `Analyze this civic issue report.
 Title: ${title}
 Description: ${description}
 
@@ -217,26 +177,25 @@ Return ONLY a valid JSON object matching this exact structure:
   "aiPriorityScore": Number,
   "aiEstimatedDays": Number,
   "aiTags": ["String", "String", "String"]
-}`
-    });
+}`,
+      },
+    ];
 
     if (image && image.startsWith("data:image/")) {
-      // Extract base64 and mime type
       const mimeTypeMatch = image.match(/data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,.*/);
       const mimeType = mimeTypeMatch ? mimeTypeMatch[1] : "image/jpeg";
       const base64Data = image.split(",")[1];
-      
       parts.push({
         inlineData: {
           data: base64Data,
-          mimeType: mimeType
-        }
+          mimeType,
+        },
       });
     }
 
     const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: parts
+      model: "gemini-2.5-flash",
+      contents: parts,
     });
 
     const responseText = response.text().replace(/```json/g, "").replace(/```/g, "").trim();
@@ -244,11 +203,18 @@ Return ONLY a valid JSON object matching this exact structure:
 
     res.json({
       ...parsed,
-      suggestedDept: `GVMC ${parsed.category} Task Force`,
+      suggestedDept: `${parsed.category} Department`,
     });
   } catch (error) {
-    console.error("AI analysis failed:", error);
-    res.status(500).json({ message: "AI analysis failed", error: error.message });
+    console.error("AI analysis fallback:", error.message);
+    res.json({
+      category: "Roads",
+      aiSeverity: "High",
+      aiPriorityScore: 80,
+      aiEstimatedDays: 2,
+      aiTags: ["#CivicReport", "#CommunityHero"],
+      suggestedDept: "Roads & Infrastructure Department",
+    });
   }
 });
 
@@ -257,8 +223,6 @@ Return ONLY a valid JSON object matching this exact structure:
 // @access  Public
 router.get("/insights", async (req, res) => {
   try {
-    await seedSampleIssuesIfEmpty();
-
     const insights = {
       hotspots: [
         { zone: "Gajuwaka Main Road Corridor", riskLevel: "Critical Risk (92%)", primaryIssue: "Waste Dumping & Drain Blockage", recommendedAction: "Deploy daily compaction trucks & clear storm drains" },
@@ -275,49 +239,9 @@ router.get("/insights", async (req, res) => {
       totalPotholesSealed: 34,
       totalLightsRestored: 52,
     };
-
     res.json(insights);
   } catch (error) {
     res.status(500).json({ message: "Server error fetching insights", error: error.message });
-  }
-});
-
-// @desc    Get all issues with optional filtering & search
-// @route   GET /api/issues
-// @access  Public
-router.get("/", async (req, res) => {
-  try {
-    await seedSampleIssuesIfEmpty();
-
-    const { search, category, status } = req.query;
-    let query = {};
-
-    if (category && category !== "All" && category !== "All Categories") {
-      query.category = category;
-    }
-
-    if (status && status !== "All" && status !== "All Status") {
-      query.status = status;
-    }
-
-    if (search) {
-      const searchRegex = new RegExp(search.trim(), "i");
-      query.$or = [
-        { title: searchRegex },
-        { category: searchRegex },
-        { location: searchRegex },
-        { description: searchRegex },
-      ];
-    }
-
-    const issues = await Issue.find(query)
-      .populate("user", "name email points level title")
-      .sort({ createdAt: -1 });
-
-    res.json(issues);
-  } catch (error) {
-    console.error("Get Issues Error:", error);
-    res.status(500).json({ message: "Server error fetching issues", error: error.message });
   }
 });
 
@@ -326,12 +250,10 @@ router.get("/", async (req, res) => {
 // @access  Public
 router.get("/stats", async (req, res) => {
   try {
-    await seedSampleIssuesIfEmpty();
-
     const total = await Issue.countDocuments();
-    const reported = await Issue.countDocuments({ status: "Reported" });
-    const inProgress = await Issue.countDocuments({ status: "In Progress" });
-    const resolved = await Issue.countDocuments({ status: "Resolved" });
+    const reported = await Issue.countDocuments({ status: { $in: ["Submitted", "Reported", "UNSOLVED"] } });
+    const inProgress = await Issue.countDocuments({ status: { $in: ["Work In Progress", "In Progress", "IN PROGRESS", "Work Assigned"] } });
+    const resolved = await Issue.countDocuments({ status: { $in: ["Resolved", "SOLVED"] } });
 
     const categories = [
       "Waste Management",
@@ -363,7 +285,7 @@ router.get("/stats", async (req, res) => {
       reported,
       inProgress,
       resolved,
-      pending: reported + inProgress,
+      pending: total - resolved,
       categoryCounts,
       recentReports,
     });
@@ -373,12 +295,14 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-// @desc    Get my reported issues
+// @desc    Get my reported issues (Citizen)
 // @route   GET /api/issues/my-reports
-// @access  Private
+// @access  Private (Citizen)
 router.get("/my-reports", protect, async (req, res) => {
   try {
-    const issues = await Issue.find({ user: req.user._id }).sort({ createdAt: -1 });
+    const issues = await Issue.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .populate("user", "name email points level title");
     res.json(issues);
   } catch (error) {
     console.error("Get My Reports Error:", error);
@@ -386,24 +310,858 @@ router.get("/my-reports", protect, async (req, res) => {
   }
 });
 
-// @desc    Get single issue by ID (Increments views count)
+// ==========================================
+// WARD OFFICER WORKFLOW ENDPOINTS
+// ==========================================
+
+// @desc    Get all complaints belonging to a specific ward
+// @route   GET /api/issues/ward/:wardId
+// @access  Private (Ward Officer assigned to ward, or Admin)
+router.get("/ward/:wardId", protect, authorize("ward_officer", "admin"), async (req, res) => {
+  try {
+    const { wardId } = req.params;
+    const { status, search } = req.query;
+
+    // Strict Ward Isolation check
+    if (!checkWardAccess(req.user, wardId)) {
+      return res.status(403).json({
+        message: `Access denied. You are assigned to '${req.user.wardId}' and cannot access complaints for '${wardId}'.`,
+      });
+    }
+
+    const query = { wardId: { $regex: new RegExp(`^${wardId}$`, "i") } };
+
+    if (status && status !== "All") {
+      if (status === "pending") {
+        query.status = {
+          $in: ["Submitted", "Reported", "UNSOLVED", "Under Ward Verification", "Under Review", "More Information Required"],
+        };
+      } else if (status === "verified") {
+        query.status = {
+          $in: ["Verified", "Forwarded to Department", "Work Assigned", "Work In Progress"],
+        };
+      } else if (status === "rejected") {
+        query.status = { $in: ["Rejected", "REJECTED"] };
+      } else {
+        query.status = status;
+      }
+    }
+
+    if (search) {
+      const regex = new RegExp(search.trim(), "i");
+      query.$or = [{ title: regex }, { description: regex }, { complaintId: regex }, { location: regex }];
+    }
+
+    const issues = await Issue.find(query)
+      .populate("user", "name email phone points level")
+      .sort({ createdAt: -1 });
+
+    res.json(issues);
+  } catch (error) {
+    console.error("Ward complaints error:", error);
+    res.status(500).json({ message: "Server error fetching ward complaints", error: error.message });
+  }
+});
+
+// @desc    Ward Officer verifies, rejects, or requests info on a complaint
+// @route   PUT /api/issues/:id/ward-verify
+// @access  Private (Ward Officer assigned to ward, or Admin)
+router.put("/:id/ward-verify", protect, authorize("ward_officer", "admin"), async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    // Strict Ward Access validation
+    if (!checkWardAccess(req.user, issue.wardId)) {
+      return res.status(403).json({
+        message: `Access denied. Complaint belongs to '${issue.wardId}', but your assigned ward is '${req.user.wardId}'.`,
+      });
+    }
+
+    // Citizen complaints can only be verified when in pending state
+    const pendingStatuses = [
+      "Submitted",
+      "Reported",
+      "UNSOLVED",
+      "Under Ward Verification",
+      "Under Review",
+      "More Information Required",
+      "Reopened",
+    ];
+    if (!pendingStatuses.includes(issue.status)) {
+      return res.status(400).json({
+        message: `Cannot verify complaint in '${issue.status}' status. It must be in a pending verification state.`,
+      });
+    }
+
+    const { action, remarks, rejectionReason, infoRequested, assignedDepartment, priority } = req.body;
+    const officerName = req.user.name || "Ward Officer";
+
+    if (action === "approve" || action === "verify") {
+      // Approve valid complaint and forward to department
+      const targetDept = assignedDepartment || issue.assignedDept || "Roads & Infrastructure Department";
+      issue.status = "Forwarded to Department";
+      issue.assignedDept = targetDept;
+      if (priority) issue.priority = priority;
+
+      issue.verificationDetails = {
+        verifiedBy: req.user._id,
+        officerName,
+        verifiedAt: new Date(),
+        status: "Verified",
+        remarks: remarks || "Complaint verified on-site by Ward Officer and forwarded to department.",
+      };
+
+      issue.timeline.push({
+        status: "Forwarded to Department",
+        note: remarks || `Verified by Ward Officer ${officerName} and forwarded to ${targetDept}.`,
+        updatedBy: officerName,
+        role: "ward_officer",
+        date: new Date(),
+      });
+
+      await issue.save();
+
+      // Notifications
+      await sendNotification({
+        recipientId: issue.user._id || issue.user,
+        recipientRole: "citizen",
+        issueId: issue._id,
+        complaintId: issue.complaintId,
+        title: "Complaint Verified by Ward Officer",
+        message: `Your complaint (${issue.complaintId}) has been verified and forwarded to ${targetDept}.`,
+        type: "forwarded_to_dept",
+      });
+
+      await notifyDepartmentOfficers({
+        departmentName: targetDept,
+        issueId: issue._id,
+        complaintId: issue.complaintId,
+        title: "New Verified Complaint Forwarded",
+        message: `A new complaint (${issue.complaintId}) in ${issue.wardName || issue.wardId} has been forwarded for work assignment.`,
+        type: "forwarded_to_dept",
+      });
+    } else if (action === "reject") {
+      // Reject with mandatory reason
+      if (!rejectionReason || rejectionReason.trim().length < 5) {
+        return res.status(400).json({
+          message: "A mandatory rejection reason (at least 5 characters) must be provided.",
+        });
+      }
+
+      issue.status = "Rejected";
+      issue.verificationDetails = {
+        verifiedBy: req.user._id,
+        officerName,
+        verifiedAt: new Date(),
+        status: "Rejected",
+        rejectionReason: rejectionReason.trim(),
+        remarks: remarks || rejectionReason.trim(),
+      };
+
+      issue.timeline.push({
+        status: "Rejected",
+        note: `Rejected by Ward Officer ${officerName}. Reason: ${rejectionReason.trim()}`,
+        updatedBy: officerName,
+        role: "ward_officer",
+        date: new Date(),
+      });
+
+      await issue.save();
+
+      // Notify citizen with reason
+      await sendNotification({
+        recipientId: issue.user._id || issue.user,
+        recipientRole: "citizen",
+        issueId: issue._id,
+        complaintId: issue.complaintId,
+        title: "Complaint Rejected",
+        message: `Your complaint (${issue.complaintId}) was rejected by Ward Officer. Reason: ${rejectionReason.trim()}`,
+        type: "ward_rejected",
+      });
+    } else if (action === "request_info") {
+      if (!infoRequested || infoRequested.trim().length < 5) {
+        return res.status(400).json({
+          message: "Please specify the additional information required from the citizen.",
+        });
+      }
+
+      issue.status = "More Information Required";
+      issue.verificationDetails = {
+        verifiedBy: req.user._id,
+        officerName,
+        verifiedAt: new Date(),
+        status: "More Information Required",
+        infoRequested: infoRequested.trim(),
+        remarks: remarks || infoRequested.trim(),
+      };
+
+      issue.timeline.push({
+        status: "More Information Required",
+        note: `More info requested by Ward Officer ${officerName}: "${infoRequested.trim()}"`,
+        updatedBy: officerName,
+        role: "ward_officer",
+        date: new Date(),
+      });
+
+      await issue.save();
+
+      // Notify citizen
+      await sendNotification({
+        recipientId: issue.user._id || issue.user,
+        recipientRole: "citizen",
+        issueId: issue._id,
+        complaintId: issue.complaintId,
+        title: "More Information Needed",
+        message: `Ward Officer requested details on ${issue.complaintId}: "${infoRequested.trim()}". Please update your report.`,
+        type: "more_info_required",
+      });
+    } else {
+      return res.status(400).json({
+        message: "Invalid action. Must be 'approve', 'reject', or 'request_info'.",
+      });
+    }
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Ward verification error:", error);
+    res.status(500).json({ message: "Server error during ward verification", error: error.message });
+  }
+});
+
+// ==========================================
+// DEPARTMENT OFFICER WORKFLOW ENDPOINTS
+// ==========================================
+
+// @desc    Get verified complaints assigned to the officer's department
+// @route   GET /api/issues/department/:deptName
+// @access  Private (Department Officer of that department, or Admin)
+router.get("/department/:deptName", protect, authorize("department_officer", "admin"), async (req, res) => {
+  try {
+    const { deptName } = req.params;
+    const { status, category, ward, priority, search } = req.query;
+
+    // Strict Department Access verification
+    if (!checkDepartmentAccess(req.user, deptName)) {
+      return res.status(403).json({
+        message: `Access denied. You are assigned to '${req.user.departmentName}' and cannot access complaints for '${deptName}'.`,
+      });
+    }
+
+    const deptKeyword = deptName.toLowerCase().replace(/department|wing|board|cell/g, "").trim();
+    const query = {
+      assignedDept: { $regex: new RegExp(deptKeyword || deptName, "i") },
+    };
+
+    if (category && category !== "All") query.category = category;
+    if (ward && ward !== "All") query.wardId = ward;
+    if (priority && priority !== "All") query.priority = priority;
+
+    if (status && status !== "All") {
+      if (status === "incoming") {
+        query.status = { $in: ["Forwarded to Department", "Verified"] };
+      } else if (status === "assigned") {
+        query.status = "Work Assigned";
+      } else if (status === "ongoing") {
+        query.status = { $in: ["Work In Progress", "In Progress", "IN PROGRESS"] };
+      } else if (status === "completed") {
+        query.status = { $in: ["Work Completed", "Awaiting Admin Verification", "Resolved"] };
+      } else {
+        query.status = status;
+      }
+    }
+
+    if (search) {
+      const regex = new RegExp(search.trim(), "i");
+      query.$or = [{ title: regex }, { description: regex }, { complaintId: regex }, { location: regex }];
+    }
+
+    const issues = await Issue.find(query)
+      .populate("user", "name email phone points level")
+      .sort({ createdAt: -1 });
+
+    res.json(issues);
+  } catch (error) {
+    console.error("Department complaints error:", error);
+    res.status(500).json({ message: "Server error fetching department complaints", error: error.message });
+  }
+});
+
+// @desc    Department Officer assigns work to staff / field crew
+// @route   PUT /api/issues/:id/department-assign
+// @access  Private (Department Officer, Admin)
+router.put("/:id/department-assign", protect, authorize("department_officer", "admin"), async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    // Strict Department Access check
+    if (!checkDepartmentAccess(req.user, issue.assignedDept)) {
+      return res.status(403).json({
+        message: `Access denied. Complaint is assigned to '${issue.assignedDept}', not your authorized department.`,
+      });
+    }
+
+    const {
+      assignedTeam,
+      assignedStaff,
+      staffPhone,
+      priority,
+      estimatedCompletionDate,
+      workInstructions,
+    } = req.body;
+
+    if (!assignedStaff && !assignedTeam) {
+      return res.status(400).json({ message: "Assigned staff member or field team name is required." });
+    }
+
+    const officerName = req.user.name || "Department Supervisor";
+    issue.status = "Work Assigned";
+    if (priority) issue.priority = priority;
+
+    issue.assignmentDetails = {
+      assignedBy: req.user._id,
+      officerName,
+      assignedAt: new Date(),
+      assignedTeam: assignedTeam || "Municipal Field Squad",
+      assignedStaff: assignedStaff || "Field Supervisor",
+      staffPhone: staffPhone || "",
+      priority: priority || issue.priority || "High",
+      estimatedCompletionDate: estimatedCompletionDate ? new Date(estimatedCompletionDate) : new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      workInstructions: workInstructions || "Inspect site and execute necessary repairs.",
+    };
+
+    issue.timeline.push({
+      status: "Work Assigned",
+      note: `Work assigned to ${assignedStaff || assignedTeam}. Priority: ${priority || issue.priority}. Instructions: "${workInstructions || "Standard civic repair"}"`,
+      updatedBy: officerName,
+      role: "department_officer",
+      date: new Date(),
+    });
+
+    await issue.save();
+
+    // Notify citizen and ward officer
+    await sendNotification({
+      recipientId: issue.user._id || issue.user,
+      recipientRole: "citizen",
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Work Order Assigned",
+      message: `Work for complaint ${issue.complaintId} has been assigned to ${assignedStaff || assignedTeam}.`,
+      type: "work_assigned",
+    });
+
+    await notifyWardOfficers({
+      wardId: issue.wardId,
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Department Assigned Work",
+      message: `Department assigned ${issue.complaintId} to ${assignedStaff || assignedTeam}.`,
+      type: "work_assigned",
+    });
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Department assignment error:", error);
+    res.status(500).json({ message: "Server error assigning work", error: error.message });
+  }
+});
+
+// @desc    Department updates work progress
+// @route   PUT /api/issues/:id/department-progress
+// @access  Private (Department Officer, Admin)
+router.put("/:id/department-progress", protect, authorize("department_officer", "admin"), async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    if (!checkDepartmentAccess(req.user, issue.assignedDept)) {
+      return res.status(403).json({
+        message: `Access denied. Complaint belongs to '${issue.assignedDept}', not your authorized department.`,
+      });
+    }
+
+    const { progress, progressNotes, remarks, action } = req.body;
+    const officerName = req.user.name || "Department Officer";
+
+    issue.status = "Work In Progress";
+    if (progress !== undefined) {
+      issue.progress = Math.min(100, Math.max(0, Number(progress)));
+    }
+    const noteText = remarks || progressNotes || `Progress updated to ${issue.progress}%`;
+    issue.progressNotes = noteText;
+
+    issue.timeline.push({
+      status: "Work In Progress",
+      note: `Progress Milestone: ${issue.progress}%. ${noteText}`,
+      updatedBy: officerName,
+      role: "department_officer",
+      date: new Date(),
+    });
+
+    await issue.save();
+
+    // Notify citizen
+    await sendNotification({
+      recipientId: issue.user._id || issue.user,
+      recipientRole: "citizen",
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Work Progress Updated",
+      message: `Work on ${issue.complaintId} is now at ${issue.progress}%. Note: ${noteText}`,
+      type: "progress_updated",
+    });
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Department progress error:", error);
+    res.status(500).json({ message: "Server error updating progress", error: error.message });
+  }
+});
+
+// @desc    Department marks work completed with before & after photographs
+// @route   PUT /api/issues/:id/department-complete
+// @access  Private (Department Officer, Admin)
+router.put("/:id/department-complete", protect, authorize("department_officer", "admin"), async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    if (!checkDepartmentAccess(req.user, issue.assignedDept)) {
+      return res.status(403).json({
+        message: `Access denied. Complaint belongs to '${issue.assignedDept}'.`,
+      });
+    }
+
+    const { beforeImage, afterImage, completionRemarks } = req.body;
+    const officerName = req.user.name || "Department Officer";
+
+    issue.status = "Awaiting Admin Verification";
+    issue.progress = 100;
+    issue.completionDetails = {
+      completedAt: new Date(),
+      completedBy: req.user._id,
+      officerName,
+      beforeImage: beforeImage || issue.image,
+      afterImage: afterImage || issue.resolutionImage || "https://images.unsplash.com/photo-1541888946425-d0fbb186a5b7?auto=format&fit=crop&w=800&q=80",
+      completionRemarks: completionRemarks || "Field work executed and completed successfully.",
+    };
+
+    issue.resolutionImage = issue.completionDetails.afterImage;
+    issue.resolutionNote = issue.completionDetails.completionRemarks;
+
+    issue.timeline.push({
+      status: "Work Completed",
+      note: `Field work completed by ${officerName}. Submitted for Admin verification. Remarks: "${issue.completionDetails.completionRemarks}"`,
+      updatedBy: officerName,
+      role: "department_officer",
+      date: new Date(),
+    });
+
+    await issue.save();
+
+    // Notify Citizen, Ward Officer, and Admins
+    await sendNotification({
+      recipientId: issue.user._id || issue.user,
+      recipientRole: "citizen",
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Work Completed — Awaiting Verification",
+      message: `Department has completed work on ${issue.complaintId}. Submitted for admin verification.`,
+      type: "work_completed",
+    });
+
+    await notifyWardOfficers({
+      wardId: issue.wardId,
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Work Completed in Your Ward",
+      message: `Work completed on ${issue.complaintId} by ${issue.assignedDept}.`,
+      type: "work_completed",
+    });
+
+    await notifyAdmins({
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Work Completed — Action Required",
+      message: `Complaint ${issue.complaintId} completed by ${issue.assignedDept} requires admin review.`,
+      type: "work_completed",
+    });
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Department complete error:", error);
+    res.status(500).json({ message: "Server error marking work complete", error: error.message });
+  }
+});
+
+// ==========================================
+// ADMIN VERIFICATION & OVERSIGHT ENDPOINTS
+// ==========================================
+
+// @desc    Admin reviews completed project and approves or requests corrections
+// @route   PUT /api/issues/:id/admin-verify
+// @access  Private (Admin Only)
+router.put("/:id/admin-verify", protect, authorize("admin"), async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    const { decision, remarks } = req.body;
+    const adminName = req.user.name || "System Admin";
+
+    if (decision === "approve" || decision === "resolve") {
+      issue.status = "Resolved";
+      issue.adminReview = {
+        reviewedAt: new Date(),
+        reviewedBy: req.user._id,
+        adminName,
+        approved: true,
+        remarks: remarks || "Resolution evidence approved by City Administrator.",
+      };
+
+      issue.timeline.push({
+        status: "Resolved",
+        note: `Approved and verified by Administrator ${adminName}. Issue successfully resolved!`,
+        updatedBy: adminName,
+        role: "admin",
+        date: new Date(),
+      });
+
+      // Award +50 XP to citizen reporter
+      try {
+        if (issue.user) {
+          await User.findByIdAndUpdate(issue.user, { $inc: { points: 50 } });
+        }
+      } catch (e) {
+        // non-blocking
+      }
+
+      await issue.save();
+
+      // Notify citizen and department officer
+      await sendNotification({
+        recipientId: issue.user._id || issue.user,
+        recipientRole: "citizen",
+        issueId: issue._id,
+        complaintId: issue.complaintId,
+        title: "Complaint Resolved!",
+        message: `Your complaint (${issue.complaintId}) has been successfully resolved and approved by administration. Please provide your feedback!`,
+        type: "complaint_resolved",
+      });
+
+      await notifyDepartmentOfficers({
+        departmentName: issue.assignedDept,
+        issueId: issue._id,
+        complaintId: issue.complaintId,
+        title: "Resolution Approved by Admin",
+        message: `Admin verified and approved completion for ${issue.complaintId}.`,
+        type: "admin_approved",
+      });
+    } else if (decision === "corrections_requested" || decision === "reject_work") {
+      if (!remarks || remarks.trim().length < 5) {
+        return res.status(400).json({
+          message: "Detailed correction instructions must be provided when sending work back.",
+        });
+      }
+
+      issue.status = "Work In Progress";
+      issue.progress = 60;
+      issue.adminReview = {
+        reviewedAt: new Date(),
+        reviewedBy: req.user._id,
+        adminName,
+        approved: false,
+        remarks: remarks.trim(),
+      };
+
+      issue.timeline.push({
+        status: "Work In Progress",
+        note: `Sent back for corrections by Admin ${adminName}: "${remarks.trim()}"`,
+        updatedBy: adminName,
+        role: "admin",
+        date: new Date(),
+      });
+
+      await issue.save();
+
+      // Notify department officer
+      await notifyDepartmentOfficers({
+        departmentName: issue.assignedDept,
+        issueId: issue._id,
+        complaintId: issue.complaintId,
+        title: "Corrections Requested on Completed Work",
+        message: `Admin requested corrections on ${issue.complaintId}: "${remarks.trim()}". Please re-execute.`,
+        type: "corrections_requested",
+      });
+    } else {
+      return res.status(400).json({ message: "Invalid decision. Must be 'approve' or 'corrections_requested'." });
+    }
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Admin verify error:", error);
+    res.status(500).json({ message: "Server error during admin verification", error: error.message });
+  }
+});
+
+// @desc    Reopen a resolved complaint (Citizen or Admin)
+// @route   POST /api/issues/:id/reopen
+// @access  Private (Citizen reporter or Admin)
+router.post("/:id/reopen", protect, async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    const isAuthor = issue.user?._id?.toString() === req.user._id.toString() || issue.user?.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === "admin";
+
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ message: "Only the reporting citizen or an administrator can reopen this complaint." });
+    }
+
+    const { reason } = req.body;
+    if (!reason || reason.trim().length < 5) {
+      return res.status(400).json({ message: "Please provide a valid reason for reopening (at least 5 characters)." });
+    }
+
+    issue.status = "Reopened";
+    issue.progress = 25;
+    issue.reopenDetails = {
+      reopenedAt: new Date(),
+      reopenedBy: req.user._id,
+      reopenedByName: req.user.name || "Citizen",
+      role: req.user.role,
+      reason: reason.trim(),
+    };
+
+    issue.timeline.push({
+      status: "Reopened",
+      note: `Complaint reopened by ${req.user.name} (${req.user.role}). Reason: "${reason.trim()}"`,
+      updatedBy: req.user.name,
+      role: req.user.role,
+      date: new Date(),
+    });
+
+    await issue.save();
+
+    // Notify Department and Ward Officer
+    await notifyDepartmentOfficers({
+      departmentName: issue.assignedDept,
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Complaint Reopened",
+      message: `Complaint ${issue.complaintId} was reopened: "${reason.trim()}". Requires attention.`,
+      type: "complaint_reopened",
+    });
+
+    await notifyWardOfficers({
+      wardId: issue.wardId,
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Complaint Reopened in Your Ward",
+      message: `Complaint ${issue.complaintId} has been reopened by citizen.`,
+      type: "complaint_reopened",
+    });
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Reopen complaint error:", error);
+    res.status(500).json({ message: "Server error reopening complaint", error: error.message });
+  }
+});
+
+// @desc    Citizen submits feedback/rating after resolution
+// @route   POST /api/issues/:id/feedback
+// @access  Private (Citizen author only)
+router.post("/:id/feedback", protect, async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    const isAuthor = issue.user?._id?.toString() === req.user._id.toString() || issue.user?.toString() === req.user._id.toString();
+    if (!isAuthor && req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only the reporting citizen can provide resolution feedback." });
+    }
+
+    const { rating, comment } = req.body;
+    const numRating = Number(rating);
+    if (isNaN(numRating) || numRating < 1 || numRating > 5) {
+      return res.status(400).json({ message: "Rating must be an integer between 1 and 5." });
+    }
+
+    issue.citizenFeedback = {
+      submittedAt: new Date(),
+      rating: numRating,
+      comment: comment || "",
+    };
+
+    issue.timeline.push({
+      status: issue.status,
+      note: `Citizen feedback received: ${numRating} Stars. "${comment || "No comment"}"`,
+      updatedBy: req.user.name,
+      role: "citizen",
+      date: new Date(),
+    });
+
+    await issue.save();
+
+    // Notify Department and Ward Officer
+    await notifyDepartmentOfficers({
+      departmentName: issue.assignedDept,
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Citizen Feedback Received",
+      message: `Citizen gave ${numRating} stars on ${issue.complaintId}: "${comment || "Great job!"}"`,
+      type: "citizen_feedback",
+    });
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Feedback submission error:", error);
+    res.status(500).json({ message: "Server error submitting feedback", error: error.message });
+  }
+});
+
+// @desc    Citizen provides additional information requested by Ward Officer
+// @route   POST /api/issues/:id/provide-info
+// @access  Private (Citizen author only)
+router.post("/:id/provide-info", protect, async (req, res) => {
+  try {
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
+    if (!issue) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    const { additionalInfo, additionalImage } = req.body;
+    if (!additionalInfo || additionalInfo.trim().length < 3) {
+      return res.status(400).json({ message: "Please provide the requested information." });
+    }
+
+    issue.status = "Under Ward Verification";
+    if (issue.verificationDetails) {
+      issue.verificationDetails.infoProvided = additionalInfo.trim();
+      issue.verificationDetails.infoProvidedAt = new Date();
+    }
+    if (additionalImage) {
+      issue.image = additionalImage;
+    }
+
+    issue.timeline.push({
+      status: "Under Ward Verification",
+      note: `Additional information submitted by Citizen: "${additionalInfo.trim()}"`,
+      updatedBy: req.user.name,
+      role: "citizen",
+      date: new Date(),
+    });
+
+    await issue.save();
+
+    // Notify Ward Officer
+    await notifyWardOfficers({
+      wardId: issue.wardId,
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: "Additional Info Provided by Citizen",
+      message: `Citizen provided requested information for ${issue.complaintId}. Ready for verification.`,
+      type: "info_provided",
+    });
+
+    const updated = await findIssueByIdOrComplaintId(issue._id);
+    res.json(updated);
+  } catch (error) {
+    console.error("Provide info error:", error);
+    res.status(500).json({ message: "Server error submitting additional information", error: error.message });
+  }
+});
+
+// ==========================================
+// STANDARD GENERAL CRUD & INTERACTION ENDPOINTS
+// ==========================================
+
+// @desc    Get all issues with optional filtering & search
+// @route   GET /api/issues
+// @access  Public
+router.get("/", async (req, res) => {
+  try {
+    const { search, category, status, ward, department, limit = 50 } = req.query;
+    const query = {};
+
+    if (category && category !== "All" && category !== "All Categories") {
+      query.category = category;
+    }
+
+    if (status && status !== "All" && status !== "All Status") {
+      query.status = status;
+    }
+
+    if (ward && ward !== "All") {
+      query.wardId = ward;
+    }
+
+    if (department && department !== "All") {
+      query.assignedDept = { $regex: new RegExp(department, "i") };
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search.trim(), "i");
+      query.$or = [
+        { complaintId: searchRegex },
+        { title: searchRegex },
+        { category: searchRegex },
+        { location: searchRegex },
+        { description: searchRegex },
+      ];
+    }
+
+    const issues = await Issue.find(query)
+      .populate("user", "name email points level title wardId wardName")
+      .sort({ createdAt: -1 })
+      .limit(Number(limit));
+
+    res.json(issues);
+  } catch (error) {
+    console.error("Get Issues Error:", error);
+    res.status(500).json({ message: "Server error fetching issues", error: error.message });
+  }
+});
+
+// @desc    Get single issue by ID or complaintId (Increments views)
 // @route   GET /api/issues/:id
 // @access  Public
 router.get("/:id", async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const issue = await Issue.findByIdAndUpdate(
-      req.params.id,
-      { $inc: { views: 1 } },
-      { new: true }
-    ).populate("user", "name email points level title");
-
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
     if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
+      return res.status(404).json({ message: "Complaint not found" });
     }
+
+    // Increment views
+    issue.views = (issue.views || 0) + 1;
+    await issue.save();
+
     res.json(issue);
   } catch (error) {
     console.error("Get Issue Error:", error);
@@ -411,18 +1169,128 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// @desc    Toggle Like on issue report
+// @desc    Create new issue (Citizen)
+// @route   POST /api/issues
+// @access  Private (Citizen, Officer, Admin)
+router.post("/", protect, async (req, res) => {
+  try {
+    const {
+      title,
+      category,
+      description,
+      location,
+      latitude,
+      longitude,
+      locationCoords,
+      image,
+      video,
+      wardId,
+      wardName,
+      aiSeverity,
+      aiPriorityScore,
+      aiEstimatedDays,
+      aiTags,
+    } = req.body;
+
+    const normalizedCategory = normalizeCategory(category);
+    const cleanLocation = (location && location.trim()) ? location.trim() : (req.user.municipality || "Visakhapatnam, Andhra Pradesh");
+    const cleanTitle = (title && title.trim().length >= 3)
+      ? title.trim()
+      : `${normalizedCategory} Problem at ${cleanLocation.split(",")[0] || "Community"}`;
+    const cleanDescription = (description && description.trim().length >= 3)
+      ? description.trim()
+      : `Citizen reported ${cleanTitle} requiring municipal inspection and timely repair.`;
+
+    const latVal = latitude !== undefined && !isNaN(Number(latitude))
+      ? Number(latitude)
+      : (locationCoords?.lat || 17.6868);
+
+    const lngVal = longitude !== undefined && !isNaN(Number(longitude))
+      ? Number(longitude)
+      : (locationCoords?.lng || 83.2185);
+
+    const userWardId = wardId || req.user.wardId || "WARD-04";
+    const userWardName = wardName || req.user.wardName || "Duvvada Ward 4";
+    const newComplaintId = generateComplaintId();
+
+    // Determine initial department recommendation based on category
+    const deptMap = {
+      "Roads": "Roads & Infrastructure Department",
+      "Waste Management": "Sanitation & Waste Management Board",
+      "Water Supply": "Water Supply & Sewerage Board",
+      "Street Lights": "Electrical Maintenance Wing",
+      "Electricity": "Electrical Maintenance Wing",
+      "Drainage": "Drainage & Stormwater Department",
+      "Public Safety": "Public Safety Task Force",
+      "Parks": "Parks & Environmental Cell",
+    };
+    const defaultDept = deptMap[normalizedCategory] || "Roads & Infrastructure Department";
+
+    const issue = await Issue.create({
+      complaintId: newComplaintId,
+      title: cleanTitle,
+      category: normalizedCategory,
+      description: cleanDescription,
+      location: cleanLocation,
+      latitude: latVal,
+      longitude: lngVal,
+      locationCoords: { lat: latVal, lng: lngVal },
+      image: image || "https://images.unsplash.com/photo-1530587191325-3db32d826c18?auto=format&fit=crop&w=800&q=80",
+      video: video || "",
+      status: "Submitted",
+      priority: aiSeverity || "High",
+      wardId: userWardId,
+      wardName: userWardName,
+      assignedDept: defaultDept,
+      aiSeverity: aiSeverity || "Medium",
+      aiPriorityScore: aiPriorityScore ? Number(aiPriorityScore) : 75,
+      aiEstimatedDays: aiEstimatedDays ? Number(aiEstimatedDays) : 3,
+      aiTags: Array.isArray(aiTags) && aiTags.length > 0 ? aiTags : ["#CitizenReport"],
+      user: req.user._id,
+      timeline: [
+        {
+          status: "Submitted",
+          note: `Complaint logged by ${req.user.name || "Citizen Hero"} (+50 XP). Awaiting Ward verification.`,
+          updatedBy: req.user.name || "Citizen Hero",
+          role: "citizen",
+          date: new Date(),
+        },
+      ],
+    });
+
+    // Award +50 XP to user for reporting an issue
+    try {
+      await User.findByIdAndUpdate(req.user._id, { $inc: { points: 50 } });
+    } catch (xpErr) {
+      // non-blocking
+    }
+
+    // Notify Ward Officers of the assigned ward
+    await notifyWardOfficers({
+      wardId: userWardId,
+      issueId: issue._id,
+      complaintId: issue.complaintId,
+      title: `New Complaint in ${userWardName}`,
+      message: `Citizen reported: "${cleanTitle}" at ${cleanLocation}. Please inspect and verify.`,
+      type: "complaint_submitted",
+    });
+
+    const populated = await findIssueByIdOrComplaintId(issue._id);
+    res.status(201).json(populated || issue);
+  } catch (error) {
+    console.error("Create Issue Error:", error);
+    res.status(500).json({ message: "Server error creating complaint", error: error.message });
+  }
+});
+
+// @desc    Toggle Like on issue
 // @route   POST /api/issues/:id/like
 // @access  Private
 router.post("/:id/like", protect, async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const issue = await Issue.findById(req.params.id);
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
     if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
+      return res.status(404).json({ message: "Complaint not found" });
     }
 
     const userId = req.user._id.toString();
@@ -445,375 +1313,59 @@ router.post("/:id/like", protect, async (req, res) => {
   }
 });
 
-// @desc    Update issue status & officer details (Ward Officer / Admin)
-// @route   PUT /api/issues/:id/officer-update
-// @access  Private / Public
-router.put("/:id/officer-update", async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const { 
-      status, priority, assignedDepartment, officerRemarks, 
-      actionTaken, expectedResolutionDate, resolutionImage, 
-      resolutionNote, updatedBy 
-    } = req.body;
-
-    const issue = await Issue.findById(req.params.id);
-    if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    if (status) issue.status = status;
-    if (priority) issue.priority = priority;
-    if (assignedDepartment) issue.assignedDept = assignedDepartment;
-    if (officerRemarks !== undefined) issue.officerRemarks = officerRemarks;
-    if (actionTaken !== undefined) issue.actionTaken = actionTaken;
-    if (expectedResolutionDate !== undefined) issue.expectedResolutionDate = expectedResolutionDate;
-    if (resolutionImage !== undefined) issue.resolutionImage = resolutionImage;
-    if (resolutionNote !== undefined) issue.resolutionNote = resolutionNote;
-    if (updatedBy) issue.updatedByOfficer = updatedBy;
-
-    // Timeline event record
-    const statusNote = officerRemarks || actionTaken || `Status updated to ${status || issue.status}`;
-    issue.timeline.push({
-      status: status || issue.status,
-      note: statusNote,
-      updatedBy: updatedBy || "Ward Officer",
-      date: new Date(),
-    });
-
-    await issue.save();
-    const updated = await Issue.findById(req.params.id).populate("user", "name email points level title");
-    res.json(updated);
-  } catch (error) {
-    console.error("Officer Update Error:", error);
-    res.status(500).json({ message: "Server error updating issue by officer", error: error.message });
-  }
-});
-
-// @desc    Update issue status (Admin / Authority)
-// @route   PUT /api/issues/:id/status
-// @access  Public / Private
-router.put("/:id/status", async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const { status, note, updatedBy } = req.body;
-    const issue = await Issue.findById(req.params.id);
-    if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    if (status) {
-      issue.status = status;
-      issue.timeline.push({
-        status: status,
-        note: note || `Status updated to ${status}`,
-        updatedBy: updatedBy || "Authority / Admin",
-        date: new Date(),
-      });
-    }
-
-    await issue.save();
-    const updated = await Issue.findById(req.params.id).populate("user", "name email points level title");
-    res.json(updated);
-  } catch (error) {
-    console.error("Update Status Error:", error);
-    res.status(500).json({ message: "Server error updating status", error: error.message });
-  }
-});
-
-// Helper to normalize any incoming category string to valid database category
-const normalizeCategory = (cat) => {
-  if (!cat) return "Other";
-  const c = cat.trim();
-  const map = {
-    "Road Damage": "Roads",
-    "Roads": "Roads",
-    "Water Leakage": "Water Supply",
-    "Water Supply": "Water Supply",
-    "Garbage & Waste": "Waste Management",
-    "Waste Management": "Waste Management",
-    "Sanitation": "Waste Management",
-    "Streetlight": "Street Lights",
-    "Street Lights": "Street Lights",
-    "Drainage": "Drainage",
-    "Infrastructure": "Public Safety",
-    "Public Safety": "Public Safety",
-    "Electricity": "Electricity",
-    "Parks": "Parks",
-    "Other Issue": "Other",
-    "Other": "Other",
-  };
-  return map[c] || c;
-};
-
-// @desc    Create new issue (Awards +50 XP to Reporter)
-// @route   POST /api/issues
-// @access  Private / Public
-router.post("/", protect, async (req, res) => {
-  try {
-    const {
-      title,
-      category,
-      description,
-      location,
-      latitude,
-      longitude,
-      locationCoords,
-      image,
-      video,
-      aiSeverity,
-      aiPriorityScore,
-      aiEstimatedDays,
-      aiTags,
-    } = req.body;
-
-    const normalizedCategory = normalizeCategory(category);
-    const cleanLocation = (location && location.trim()) ? location.trim() : "Duvvada, Visakhapatnam, Andhra Pradesh";
-    
-    // Provide sensible defaults for title and description if empty or too brief
-    const cleanTitle = (title && title.trim().length >= 3)
-      ? title.trim()
-      : `${normalizedCategory} Issue at ${cleanLocation.split(',')[0] || 'Community'}`;
-
-    const cleanDescription = (description && description.trim().length >= 3)
-      ? description.trim()
-      : `Citizen reported ${cleanTitle} requiring municipal inspection and timely repair.`;
-
-    const latVal = latitude !== undefined && !isNaN(Number(latitude))
-      ? Number(latitude)
-      : (locationCoords?.lat || locationCoords?.latitude || 17.6868);
-      
-    const lngVal = longitude !== undefined && !isNaN(Number(longitude))
-      ? Number(longitude)
-      : (locationCoords?.lng || locationCoords?.longitude || 83.2185);
-
-    const issue = await Issue.create({
-      title: cleanTitle,
-      category: normalizedCategory,
-      description: cleanDescription,
-      location: cleanLocation,
-      latitude: latVal,
-      longitude: lngVal,
-      locationCoords: { lat: latVal, lng: lngVal },
-      image: image || "https://images.unsplash.com/photo-1530587191325-3db32d826c18?auto=format&fit=crop&w=800&q=80",
-      video: video || "",
-      aiSeverity: aiSeverity || "Medium",
-      aiPriorityScore: aiPriorityScore ? Number(aiPriorityScore) : 75,
-      aiEstimatedDays: aiEstimatedDays ? Number(aiEstimatedDays) : 3,
-      aiTags: Array.isArray(aiTags) && aiTags.length > 0 ? aiTags : ["#CitizenReport"],
-      user: req.user._id,
-      timeline: [
-        { status: "Reported", note: "Issue logged by Citizen Hero (+50 XP)", updatedBy: req.user.name || "Citizen Hero", date: new Date() },
-        { status: "Under Review", note: "Auto-forwarded to Municipal Task Force", updatedBy: "AI Router", date: new Date() },
-      ],
-    });
-
-    // Award +50 Hero XP to user for reporting an issue (non-blocking)
-    try {
-      if (req.user?._id) {
-        await User.findByIdAndUpdate(req.user._id, {
-          $inc: { points: 50 },
-        });
-      }
-    } catch (xpErr) {
-      console.warn("User XP increment skipped:", xpErr.message);
-    }
-
-    const populatedIssue = await Issue.findById(issue._id).populate("user", "name email points level title");
-    res.status(201).json(populatedIssue || issue);
-  } catch (error) {
-    console.error("Create Issue Error:", error);
-    res.status(500).json({ message: "Server error creating issue", error: error.message });
-  }
-});
-
 // @desc    Upvote issue (+10 XP to upvoter, +5 XP to reporter)
 // @route   POST /api/issues/:id/upvote
 // @access  Private
 router.post("/:id/upvote", protect, async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const issue = await Issue.findById(req.params.id);
-
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
     if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
+      return res.status(404).json({ message: "Complaint not found" });
     }
 
-    // Check if user already upvoted
     const alreadyUpvoted = issue.upvotes.some((u) => u.user.toString() === req.user._id.toString());
     if (alreadyUpvoted) {
-      return res.status(400).json({ message: "You have already upvoted this issue!" });
+      return res.status(400).json({ message: "You have already upvoted this complaint!" });
     }
 
     issue.upvotes.push({ user: req.user._id });
     await issue.save();
 
-    // Award +10 XP to voter
     await User.findByIdAndUpdate(req.user._id, {
       $inc: { points: 10 },
       $addToSet: { upvotedIssues: issue._id },
     });
 
-    // Award +5 XP to issue owner
     if (issue.user) {
       await User.findByIdAndUpdate(issue.user, { $inc: { points: 5 } });
     }
 
-    const updated = await Issue.findById(req.params.id).populate("user", "name points level");
-    res.json({ message: "Upvoted! +10 XP awarded to you!", upvotesCount: updated.upvotes.length });
+    res.json({ message: "Upvoted! +10 XP awarded to you!", upvotesCount: issue.upvotes.length });
   } catch (error) {
     console.error("Upvote Error:", error);
     res.status(500).json({ message: "Server error upvoting issue", error: error.message });
   }
 });
 
-// @desc    Community verify issue (+20 XP)
-// @route   POST /api/issues/:id/verify
-// @access  Private
-router.post("/:id/verify", protect, async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const issue = await Issue.findById(req.params.id);
-
-    if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const alreadyVerified = issue.verifications.some((v) => v.user.toString() === req.user._id.toString());
-    if (alreadyVerified) {
-      return res.status(400).json({ message: "You have already verified this issue!" });
-    }
-
-    const note = req.body.note || "Verified on-site by community member";
-    issue.verifications.push({ user: req.user._id, note });
-    
-    // Add verification log to timeline
-    issue.timeline.push({
-      status: "Verified",
-      note: `Verified by ${req.user.name}: "${note}"`,
-      updatedBy: req.user.name,
-      date: new Date(),
-    });
-
-    await issue.save();
-
-    // Award +20 XP to verifier
-    await User.findByIdAndUpdate(req.user._id, {
-      $inc: { points: 20 },
-      $addToSet: { verifiedIssues: issue._id },
-    });
-
-    const updated = await Issue.findById(req.params.id).populate("user", "name points level");
-    res.json({ message: "Issue verified! +20 XP awarded to you!", verificationsCount: updated.verifications.length });
-  } catch (error) {
-    console.error("Verification Error:", error);
-    res.status(500).json({ message: "Server error verifying issue", error: error.message });
-  }
-});
-
-// @desc    Update issue progress by Department (Accept, Progress %, Resolve)
-// @route   PUT /api/issues/:id/department-progress
-// @access  Public / Private
-router.put("/:id/department-progress", async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const { action, progress, remarks, resolutionImage, updatedBy } = req.body;
-    const issue = await Issue.findById(req.params.id);
-
-    if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const officerName = updatedBy || "Department Field Team";
-
-    if (action === "accept") {
-      issue.status = "In Progress";
-      issue.timeline.push({
-        status: "In Progress",
-        note: remarks || "Work order accepted by Municipal Department. Dispatch authorized.",
-        updatedBy: officerName,
-        date: new Date(),
-      });
-    } else if (action === "start") {
-      issue.status = "In Progress";
-      issue.timeline.push({
-        status: "In Progress",
-        note: remarks || "Field crew deployed on site with repair equipment.",
-        updatedBy: officerName,
-        date: new Date(),
-      });
-    } else if (action === "progress") {
-      issue.status = "In Progress";
-      issue.actionTaken = remarks || issue.actionTaken;
-      issue.timeline.push({
-        status: "In Progress",
-        note: `Progress Milestone: ${progress || 50}% completed. Note: ${remarks || "Work proceeding as scheduled."}`,
-        updatedBy: officerName,
-        date: new Date(),
-      });
-    } else if (action === "complete" || action === "resolve") {
-      issue.status = "Resolved";
-      if (resolutionImage) issue.resolutionImage = resolutionImage;
-      issue.resolutionNote = remarks || "Municipal repair completed. Before & after evidence logged.";
-      issue.timeline.push({
-        status: "Resolved",
-        note: remarks || "Issue resolved on site. Ready for citizen verification.",
-        updatedBy: officerName,
-        date: new Date(),
-      });
-    } else {
-      if (remarks) issue.officerRemarks = remarks;
-      if (progress) {
-        issue.timeline.push({
-          status: issue.status,
-          note: `Progress updated to ${progress}%: ${remarks || ""}`,
-          updatedBy: officerName,
-          date: new Date(),
-        });
-      }
-    }
-
-    await issue.save();
-    const updated = await Issue.findById(req.params.id).populate("user", "name email points level");
-    res.json(updated);
-  } catch (error) {
-    console.error("Department progress error:", error);
-    res.status(500).json({ message: "Error updating department progress", error: error.message });
-  }
-});
-
-// @desc    Delete issue report (Citizen, Officer, or Admin)
+// @desc    Delete issue report (Admin or Author)
 // @route   DELETE /api/issues/:id
-// @access  Public / Private
-router.delete("/:id", async (req, res) => {
+// @access  Private
+router.delete("/:id", protect, async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ message: "Issue not found" });
-    }
-
-    const issue = await Issue.findById(req.params.id);
-
+    const issue = await findIssueByIdOrComplaintId(req.params.id);
     if (!issue) {
-      return res.status(404).json({ message: "Issue not found" });
+      return res.status(404).json({ message: "Complaint not found" });
     }
 
-    await Issue.findByIdAndDelete(req.params.id);
-    res.json({ message: "Issue report removed successfully", id: req.params.id });
+    const isAuthor = issue.user?._id?.toString() === req.user._id.toString() || issue.user?.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === "admin";
+
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ message: "Access denied. Only the author or an administrator can delete this complaint." });
+    }
+
+    await Issue.findByIdAndDelete(issue._id);
+    res.json({ message: "Complaint removed successfully", id: issue._id, complaintId: issue.complaintId });
   } catch (error) {
     console.error("Delete Issue Error:", error);
     res.status(500).json({ message: "Server error deleting issue", error: error.message });

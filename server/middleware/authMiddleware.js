@@ -3,27 +3,17 @@ const User = require("../models/User");
 
 const JWT_SECRET = process.env.JWT_SECRET || "community_hero_secret_key_2026";
 
-const getOrCreateDefaultUser = async () => {
-  try {
-    let demoUser = await User.findOne({ email: "citizen@hero.com" });
-    if (!demoUser) {
-      demoUser = await User.create({
-        name: "Jyoshna Kosana",
-        email: "citizen@hero.com",
-        password: "password123",
-        role: "citizen",
-        points: 450,
-        level: 3,
-        title: "Gold Community Guardian",
-      });
-    }
-    return demoUser;
-  } catch (err) {
-    const fallback = await User.findOne();
-    return fallback;
-  }
+// Normalize user role into standard 4 roles: citizen, ward_officer, department_officer, admin
+const normalizeRole = (role) => {
+  if (!role) return "citizen";
+  const r = role.toLowerCase().trim();
+  if (r === "admin" || r.includes("administrator")) return "admin";
+  if (r.includes("ward") || r === "officer" || r === "ward_officer") return "ward_officer";
+  if (r.includes("dept") || r.includes("district") || r === "department" || r === "department_officer") return "department_officer";
+  return "citizen";
 };
 
+// Protect middleware: strictly validates JWT Bearer token
 const protect = async (req, res, next) => {
   let token;
 
@@ -34,42 +24,88 @@ const protect = async (req, res, next) => {
     token = req.headers.authorization.split(" ")[1];
   }
 
+  if (!token || token === "null" || token === "undefined") {
+    return res.status(401).json({
+      message: "Not authorized, token missing. Please sign in.",
+      code: "TOKEN_MISSING",
+    });
+  }
+
   try {
-    if (token && token !== "null" && token !== "undefined") {
-      // Support demo mock tokens seamlessly
-      if (token.startsWith("mock_demo_jwt_token_") || token === "demo") {
-        req.user = await getOrCreateDefaultUser();
-        return next();
-      }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.id).select("-password");
 
-      // Verify token
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = await User.findById(decoded.id).select("-password");
-        if (req.user) {
-          return next();
-        }
-      } catch (jwtErr) {
-        // Fall back to default user for citizen operations
-      }
+    if (!user) {
+      return res.status(401).json({
+        message: "User account for this token no longer exists.",
+        code: "USER_NOT_FOUND",
+      });
     }
 
-    // Default fallback to ensure civic reporting never breaks for citizens or guests
-    req.user = await getOrCreateDefaultUser();
-    if (req.user) {
-      return next();
-    }
-
-    return res.status(401).json({ message: "Not authorized" });
+    // Attach normalized role to user object
+    user.normalizedRole = normalizeRole(user.role);
+    req.user = user;
+    return next();
   } catch (error) {
-    console.error("Auth middleware error:", error);
-    try {
-      req.user = await getOrCreateDefaultUser();
-      return next();
-    } catch {
-      return res.status(401).json({ message: "Not authorized" });
-    }
+    console.error("JWT verification failed:", error.message);
+    return res.status(401).json({
+      message: "Token is invalid or expired. Please sign in again.",
+      code: "TOKEN_INVALID",
+    });
   }
 };
 
-module.exports = { protect, getOrCreateDefaultUser };
+// Role-based access control middleware
+const authorize = (...allowedRoles) => {
+  const normalizedAllowed = allowedRoles.map(r => normalizeRole(r));
+
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+
+    const userRole = normalizeRole(req.user.role);
+
+    if (!normalizedAllowed.includes(userRole)) {
+      return res.status(403).json({
+        message: `Access denied. Role '${req.user.role}' is not authorized to access this resource.`,
+        requiredRoles: allowedRoles,
+        currentRole: req.user.role,
+      });
+    }
+
+    next();
+  };
+};
+
+// Helper: Check if user has access to a specific ward's complaints
+const checkWardAccess = (user, wardId) => {
+  const role = normalizeRole(user?.role);
+  if (role === "admin") return true; // Admin has city-wide access
+  if (role === "ward_officer") {
+    if (!wardId || !user.wardId) return true;
+    return user.wardId.trim().toUpperCase() === wardId.trim().toUpperCase();
+  }
+  return false;
+};
+
+// Helper: Check if user has access to a specific department's complaints
+const checkDepartmentAccess = (user, departmentName) => {
+  const role = normalizeRole(user?.role);
+  if (role === "admin") return true; // Admin has city-wide access
+  if (role === "department_officer") {
+    if (!departmentName || !user.departmentName) return true;
+    const userDept = user.departmentName.toLowerCase().replace(/department|wing|board|cell/g, "").trim();
+    const targetDept = departmentName.toLowerCase().replace(/department|wing|board|cell/g, "").trim();
+    return userDept.includes(targetDept) || targetDept.includes(userDept);
+  }
+  return false;
+};
+
+module.exports = {
+  protect,
+  authorize,
+  normalizeRole,
+  checkWardAccess,
+  checkDepartmentAccess,
+};

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { 
   FiBriefcase, FiAlertCircle, FiClock, FiCheckCircle, FiLoader, FiActivity, FiArrowRight
@@ -26,34 +26,23 @@ export default function DepartmentDashboard() {
   useEffect(() => {
     const fetchDepartmentData = async () => {
       try {
-        let apiIssues = [];
+        let merged = [];
         try {
-          const res = await axios.get('http://localhost:5000/api/issues');
-          if (res.data && Array.isArray(res.data)) apiIssues = res.data;
-        } catch (e) { console.error(e); }
-
-        let localReports = [];
-        try {
-          localReports = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-        } catch (e) { console.error(e); }
-
-        const mapById = new Map();
-        [...apiIssues, ...localReports].forEach(item => {
-          const key = item._id || item.id;
-          if (key) mapById.set(key, item);
-        });
-
-        const merged = Array.from(mapById.values());
+          const res = await api.get(`/issues/department/${encodeURIComponent(departmentName)}`);
+          if (res.data && Array.isArray(res.data)) merged = res.data;
+        } catch (e) {
+          console.error("Department API error:", e);
+        }
 
         const assigned = merged.filter(i => {
           const s = (i.status || '').toUpperCase();
-          return s === 'REPORTED' || s === 'UNSOLVED' || s === 'UNDER REVIEW' || s === 'ASSIGNED';
+          return s === 'FORWARDED TO DEPARTMENT' || s === 'VERIFIED' || s === 'WORK ASSIGNED' || s === 'ASSIGNED';
         }).length;
 
-        const inProgress = merged.filter(i => (i.status || '').toUpperCase() === 'IN PROGRESS').length;
+        const inProgress = merged.filter(i => (i.status || '').toUpperCase().includes('PROGRESS')).length;
         const resolved = merged.filter(i => {
           const s = (i.status || '').toUpperCase();
-          return s === 'RESOLVED' || s === 'SOLVED';
+          return s === 'RESOLVED' || s === 'SOLVED' || s === 'COMPLETED' || s === 'WORK COMPLETED';
         }).length;
 
         const critical = merged.filter(i => (i.priority || i.aiSeverity || '').toUpperCase() === 'CRITICAL').length;

@@ -3,12 +3,15 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 require("dotenv").config();
 const express = require("express");
+const mongoose = require("mongoose");
 const cors = require("cors");
 const connectDB = require("./config/db");
 const authRoutes = require("./routes/auth");
 const issueRoutes = require("./routes/issues");
 const eventRoutes = require("./routes/events");
 const leaderboardRoutes = require("./routes/leaderboard");
+const notificationRoutes = require("./routes/notifications");
+const adminRoutes = require("./routes/admin");
 
 // Connect to MongoDB and seed default users
 connectDB().then(() => {
@@ -35,6 +38,12 @@ app.use("/api/auth", authRoutes);
 // Issue routes
 app.use("/api/issues", issueRoutes);
 
+// Notification routes
+app.use("/api/notifications", notificationRoutes);
+
+// Admin routes
+app.use("/api/admin", adminRoutes);
+
 // Leaderboard routes
 app.use("/api/leaderboard", leaderboardRoutes);
 
@@ -43,7 +52,14 @@ app.use("/api/events", eventRoutes);
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
-  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+  const dbStates = { 0: "disconnected", 1: "connected", 2: "connecting", 3: "disconnecting" };
+  const currentDbState = dbStates[mongoose.connection.readyState] || "unknown";
+  res.status(200).json({
+    status: "ok",
+    database: currentDbState,
+    hasMongoUriEnv: !!process.env.MONGODB_URI,
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get("/", (req, res) => {

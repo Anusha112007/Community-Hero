@@ -4,7 +4,7 @@ import {
   FiFilter, FiMapPin, FiClock, FiUser, FiAlertTriangle, 
   FiShield, FiBriefcase, FiCalendar, FiCheck, FiX, FiLoader, FiAlertCircle 
 } from 'react-icons/fi';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import './VerifyIssues.css';
 
@@ -69,66 +69,34 @@ export default function VerifyIssues() {
     setTimeout(() => setToast(''), 4000);
   };
 
-  // Fetch real unverified/pending issues from backend + localStorage
+  // Fetch real unverified/pending issues from backend
   const loadQueue = async () => {
     try {
-      let apiIssues = [];
-      try {
-        const res = await axios.get('http://localhost:5000/api/issues');
-        if (res.data && Array.isArray(res.data)) {
-          apiIssues = res.data;
+      const res = await api.get(`/issues/ward/${wardId}?status=pending`);
+      if (res.data && Array.isArray(res.data)) {
+        const mapped = res.data.map((item) => ({
+          _id: item._id,
+          id: item.complaintId || item._id,
+          complaintId: item.complaintId || item._id,
+          title: item.title,
+          category: item.category,
+          description: item.description,
+          location: item.location,
+          latitude: item.latitude || item.locationCoords?.lat || 17.6868,
+          longitude: item.longitude || item.locationCoords?.lng || 83.2185,
+          image: item.image || `https://picsum.photos/seed/${item._id}/400/300`,
+          status: item.status || 'Submitted',
+          priority: item.priority || item.aiSeverity || 'High',
+          reporterName: item.user?.name || 'Verified Resident',
+          date: new Date(item.createdAt || item.reportedDate || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          assignedDepartment: item.assignedDept || 'Roads & Infrastructure Department',
+          officerRemarks: item.verificationDetails?.remarks || item.officerRemarks || '',
+          actionTaken: item.actionTaken || '',
+          timeline: item.timeline || [],
+        }));
+        if (isMountedRef.current) {
+          setQueue(mapped);
         }
-      } catch (err) {
-        console.error("API queue fetch error:", err);
-      }
-
-      let localReports = [];
-      try {
-        localReports = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      } catch (e) {
-        console.error("Local queue read error:", e);
-      }
-
-      const mapById = new Map();
-      [...apiIssues, ...localReports].forEach((item) => {
-        const key = item._id || item.id;
-        if (key) {
-          const status = (item.status || 'UNSOLVED').toUpperCase();
-          // Include reports that are pending verification (UNSOLVED, REPORTED, UNDER REVIEW, PENDING VERIFICATION)
-          const isPending = 
-            status === 'UNSOLVED' || 
-            status === 'REPORTED' || 
-            status === 'UNDER REVIEW' || 
-            status === 'PENDING VERIFICATION';
-
-          if (isPending) {
-            mapById.set(key, {
-              _id: key,
-              id: key,
-              title: item.title || 'Civic Problem Report',
-              category: item.category || 'Roads',
-              description: item.description || 'Civic hazard reported by citizen in ward.',
-              location: item.location || 'Duvvada, Visakhapatnam',
-              latitude: item.latitude || item.locationCoords?.lat || 17.6868,
-              longitude: item.longitude || item.locationCoords?.lng || 83.2185,
-              image: item.image || item.imageUrl || `https://picsum.photos/seed/${key}/400/300`,
-              status: item.status || 'UNSOLVED',
-              priority: item.priority || item.aiSeverity || 'High',
-              reporterName: item.reporterName || item.user?.name || 'Verified Resident',
-              date: item.date || (item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent'),
-              createdAt: item.createdAt || new Date().toISOString(),
-              assignedDepartment: item.assignedDepartment || item.assignedDept || 'Roads & Infrastructure Department',
-              officerRemarks: item.officerRemarks || '',
-              actionTaken: item.actionTaken || '',
-              timeline: item.timeline || []
-            });
-          }
-        }
-      });
-
-      const merged = Array.from(mapById.values());
-      if (isMountedRef.current) {
-        setQueue(merged);
       }
     } catch (err) {
       console.error("Queue load error:", err);
@@ -148,7 +116,7 @@ export default function VerifyIssues() {
       isMountedRef.current = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [wardId]);
 
   // Filter queue
   const filteredQueue = queue.filter((item) => {
@@ -174,151 +142,77 @@ export default function VerifyIssues() {
   // KPI Metrics for top summary bar
   const totalPending = queue.length;
   const criticalCount = queue.filter(i => (i.priority || '').toLowerCase() === 'critical' || (i.priority || '').toLowerCase() === 'high').length;
-  const underReviewCount = queue.filter(i => (i.status || '').toUpperCase() === 'UNDER REVIEW').length;
+  const underReviewCount = queue.filter(i => (i.status || '').toUpperCase().includes('REVIEW')).length;
 
   // 1. Confirm Verify Action
   const handleConfirmVerify = async () => {
     if (!activeIssue) return;
     const issueId = activeIssue._id || activeIssue.id;
 
-    const payload = {
-      status: 'UNDER REVIEW',
-      officerRemarks: verifyRemarks || 'Issue verified on-site by Ward Officer.',
-      actionTaken: 'Field verification confirmed. Routed to dispatch queue.',
-      updatedBy: officerName
-    };
-
-    if (token) {
-      try {
-        await axios.put(`http://localhost:5000/api/issues/${issueId}/officer-update`, payload, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-      } catch (err) {
-        console.error("API verify error:", err);
-      }
-    }
-
-    // Sync localStorage
     try {
-      const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      const updatedLocal = local.map(item => {
-        if (item.id === issueId || item._id === issueId) {
-          return { ...item, ...payload, updatedAt: new Date().toISOString() };
-        }
-        return item;
+      await api.put(`/issues/${issueId}/ward-verify`, {
+        action: 'approve',
+        remarks: verifyRemarks || 'Issue verified on-site by Ward Officer.',
+        assignedDepartment: assignDept || activeIssue.assignedDepartment,
+        priority: assignPriority || activeIssue.priority,
       });
-      localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-    } catch (e) {
-      console.error("Local sync error:", e);
+
+      showToast(`Complaint verified & forwarded to Department!`);
+      setModalMode(null);
+      setActiveIssue(null);
+      loadQueue();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Verification failed');
     }
-
-    // Update state
-    setQueue(prev => prev.map(item => {
-      if (item.id === issueId || item._id === issueId) {
-        return { ...item, ...payload };
-      }
-      return item;
-    }));
-
-    showToast(`Report verified & logged in dispatch queue! (+20 XP logged)`);
-    setModalMode(null);
-    setActiveIssue(null);
-    loadQueue();
   };
 
-  // 2. Confirm Reject Action (Preserves report for audit, marks status as 'Rejected')
+  // 2. Confirm Reject Action (Mandatory Reason Required)
   const handleConfirmReject = async () => {
     if (!activeIssue) return;
     const issueId = activeIssue._id || activeIssue.id;
-    const reasonText = rejectReason.trim() || 'Duplicate / Insufficient details';
+    const reasonText = rejectReason.trim();
 
-    const payload = {
-      status: 'Rejected',
-      officerRemarks: `Rejected by Officer: ${reasonText}`,
-      actionTaken: `Report rejected. Reason: ${reasonText}`,
-      updatedBy: officerName
-    };
-
-    if (token) {
-      try {
-        await axios.put(`http://localhost:5000/api/issues/${issueId}/officer-update`, payload, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-      } catch (err) {
-        console.error("API reject error:", err);
-      }
+    if (!reasonText || reasonText.length < 5) {
+      alert('A mandatory rejection reason (at least 5 characters) is required.');
+      return;
     }
 
-    // Sync localStorage
     try {
-      const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      const updatedLocal = local.map(item => {
-        if (item.id === issueId || item._id === issueId) {
-          return { ...item, ...payload, updatedAt: new Date().toISOString() };
-        }
-        return item;
+      await api.put(`/issues/${issueId}/ward-verify`, {
+        action: 'reject',
+        rejectionReason: reasonText,
       });
-      localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-    } catch (e) {
-      console.error("Local sync error:", e);
+
+      showToast(`Complaint rejected. Reason logged for citizen.`);
+      setRejectReason('');
+      setModalMode(null);
+      setActiveIssue(null);
+      loadQueue();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Rejection failed');
     }
-
-    // Remove from active pending queue
-    setQueue(prev => prev.filter(i => i.id !== issueId && i._id !== issueId));
-
-    showToast(`Report marked Rejected. Reason: "${reasonText}"`);
-    setRejectReason('');
-    setModalMode(null);
-    setActiveIssue(null);
-    loadQueue();
   };
 
-  // 3. Confirm Assign Department Action
+  // 3. Confirm Forward to Department Action
   const handleConfirmAssign = async () => {
     if (!activeIssue) return;
     const issueId = activeIssue._id || activeIssue.id;
 
-    const payload = {
-      status: 'IN PROGRESS',
-      priority: assignPriority,
-      assignedDepartment: assignDept,
-      officerRemarks: assignRemarks || `Assigned to ${assignDept} for repairs.`,
-      actionTaken: `Dispatched to ${assignDept} with ${assignPriority} priority.`,
-      expectedResolutionDate: expectedDate,
-      updatedBy: officerName
-    };
-
-    if (token) {
-      try {
-        await axios.put(`http://localhost:5000/api/issues/${issueId}/officer-update`, payload, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-      } catch (err) {
-        console.error("API assign error:", err);
-      }
-    }
-
-    // Sync localStorage
     try {
-      const local = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      const updatedLocal = local.map(item => {
-        if (item.id === issueId || item._id === issueId) {
-          return { ...item, ...payload, updatedAt: new Date().toISOString() };
-        }
-        return item;
+      await api.put(`/issues/${issueId}/ward-verify`, {
+        action: 'approve',
+        assignedDepartment: assignDept,
+        priority: assignPriority,
+        remarks: assignRemarks || `Forwarded to ${assignDept} for repair execution.`,
       });
-      localStorage.setItem('my_submitted_reports', JSON.stringify(updatedLocal));
-    } catch (e) {
-      console.error("Local sync error:", e);
+
+      showToast(`Complaint forwarded to ${assignDept}!`);
+      setModalMode(null);
+      setActiveIssue(null);
+      loadQueue();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Department forwarding failed');
     }
-
-    // Remove from verification queue as it is now in progress
-    setQueue(prev => prev.filter(i => i.id !== issueId && i._id !== issueId));
-
-    showToast(`Report dispatched to ${assignDept} (${assignPriority} Priority)!`);
-    setModalMode(null);
-    setActiveIssue(null);
-    loadQueue();
   };
 
   return (

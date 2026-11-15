@@ -1,13 +1,37 @@
 const mongoose = require("mongoose");
+const dns = require("dns");
+
+try {
+  dns.setServers(["8.8.8.8", "1.1.1.1"]);
+} catch (e) {
+  // Ignore if not permitted
+}
 
 const connectDB = async () => {
+  const primaryUri = process.env.MONGODB_URI;
+  const localUri = "mongodb://127.0.0.1:27017/community_hero";
+
+  if (primaryUri) {
+    try {
+      console.log(`Connecting to MongoDB primary URI...`);
+      const conn = await mongoose.connect(primaryUri, {
+        serverSelectionTimeoutMS: 4000,
+      });
+      console.log(`MongoDB Connected (Primary): ${conn.connection.host}`);
+      return conn;
+    } catch (primaryErr) {
+      console.warn(`Primary MongoDB URI connection failed (${primaryErr.message}). Attempting local MongoDB fallback...`);
+    }
+  }
+
   try {
-    const mongoUri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/community-hero";
-    const conn = await mongoose.connect(mongoUri);
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-  } catch (error) {
-    console.error(`Error connecting to MongoDB: ${error.message}`);
-    // Don't kill process immediately so backend can still serve requests or retry
+    const conn = await mongoose.connect(localUri, {
+      serverSelectionTimeoutMS: 4000,
+    });
+    console.log(`MongoDB Connected (Local Fallback): ${conn.connection.host}`);
+    return conn;
+  } catch (localErr) {
+    console.error(`Error connecting to MongoDB: ${localErr.message}`);
   }
 };
 

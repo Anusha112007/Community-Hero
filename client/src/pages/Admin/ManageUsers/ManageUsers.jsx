@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FaSearch, FaEdit, FaTrash, FaSync, FaShieldAlt, FaAward } from 'react-icons/fa';
-import axios from 'axios';
+import api from '../../../services/api';
 import { DeleteModal, EditUserModal } from '../../../components/Common/Modals';
 import '../AdminStyles.css';
 
@@ -17,7 +17,7 @@ export default function ManageUsers() {
   const loadUsers = async () => {
     setLoading(true);
     try {
-      const res = await axios.get('http://localhost:5000/api/auth/users');
+      const res = await api.get('/auth/users');
       const all = Array.isArray(res.data) ? res.data : [];
       const mapped = all.map(u => {
         let displayRole = 'Citizen';
@@ -61,30 +61,26 @@ export default function ManageUsers() {
   const handleUpdateUser = async (updatedData) => {
     if (!selectedUser) return;
     try {
-      await axios.put(`http://localhost:5000/api/auth/users/${selectedUser.id}`, updatedData);
+      await api.put(`/auth/users/${selectedUser.id}`, updatedData);
       setUsers(prev => prev.map(u => u.id === selectedUser.id ? { ...u, ...updatedData } : u));
       setEditModalOpen(false);
       showNotification(`User ${selectedUser.name} updated successfully!`);
     } catch (err) {
       console.error('Update user error:', err);
-      setUsers(prev => prev.map(u => u.id === selectedUser.id ? { ...u, ...updatedData } : u));
-      setEditModalOpen(false);
-      showNotification(`User profile updated.`);
+      showNotification(err.response?.data?.message || 'Error updating user');
     }
   };
 
   const handleDeleteUser = async () => {
     if (!selectedUser) return;
     try {
-      await axios.delete(`http://localhost:5000/api/auth/users/${selectedUser.id}`);
+      await api.delete(`/auth/users/${selectedUser.id}`);
       setUsers(prev => prev.filter(u => u.id !== selectedUser.id));
       setDeleteModalOpen(false);
       showNotification(`User ${selectedUser.name} deleted.`);
     } catch (err) {
       console.error('Delete user error:', err);
-      setUsers(prev => prev.filter(u => u.id !== selectedUser.id));
-      setDeleteModalOpen(false);
-      showNotification(`User account removed.`);
+      showNotification(err.response?.data?.message || 'Error deleting user');
     }
   };
 

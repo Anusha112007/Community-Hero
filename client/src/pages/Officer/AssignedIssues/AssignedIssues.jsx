@@ -5,7 +5,7 @@ import {
   FiActivity, FiLoader, FiX, FiCheck, FiCalendar, FiImage,
   FiList, FiArrowRight
 } from 'react-icons/fi';
-import axios from 'axios';
+import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import './AssignedIssues.css';
 
@@ -126,29 +126,22 @@ export default function AssignedIssues() {
   };
 
   // -------------------------------------------------------------------------
-  // Data fetching — GET /api/issues, merge localStorage, filter by assignedDept
+  // Data fetching — GET /api/issues/ward/:wardId
   // -------------------------------------------------------------------------
   const fetchAssigned = async () => {
     try {
       let apiIssues = [];
       try {
-        const res = await axios.get('http://localhost:5000/api/issues');
+        const res = await api.get(`/issues/ward/${encodeURIComponent(wardId)}`);
         if (res.data && Array.isArray(res.data)) apiIssues = res.data;
       } catch (err) {
         console.error('API fetch error:', err);
       }
 
-      let localReports = [];
-      try {
-        localReports = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      } catch (e) {
-        console.error('Local reports read error:', e);
-      }
-
       const mapById = new Map();
 
-      [...apiIssues, ...localReports].forEach((item) => {
-        const key = item._id || item.id;
+      apiIssues.forEach((item) => {
+        const key = item.complaintId || item._id;
         if (!key) return;
 
         // Only include issues that have a valid assigned department
@@ -284,11 +277,7 @@ export default function AssignedIssues() {
     };
 
     try {
-      await axios.put(
-        `http://localhost:5000/api/issues/${issueId}/officer-update`,
-        payload,
-        token ? { headers: { Authorization: `Bearer ${token}` } } : {}
-      );
+      await api.put(`/issues/${issueId}/officer-update`, payload);
     } catch (err) {
       console.error('Status update error:', err);
     }

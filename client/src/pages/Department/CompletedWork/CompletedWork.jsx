@@ -1,59 +1,49 @@
 import { useState, useEffect } from 'react';
-import { FaSearch, FaEye, FaDownload, FaSync, FaMapMarkerAlt } from 'react-icons/fa';
-import axios from 'axios';
+import { FaSearch, FaEye, FaDownload, FaSync, FaMapMarkerAlt, FaCheckDouble } from 'react-icons/fa';
+import api from '../../../services/api';
+import { useAuth } from '../../../context/AuthContext';
 import { ViewDetailsModal } from '../../../components/Common/DepartmentModals';
 
 import '../../Officer/Dashboard/OfficerDashboard.css';
 import '../../../components/dashboards/OfficerDashboardCards/OfficerDashboardCards.css';
 
 export default function CompletedWork() {
+  const { user } = useAuth();
   const [completed, setCompleted] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedWork, setSelectedWork] = useState(null);
   const [viewModalOpen, setViewModalOpen] = useState(false);
 
+  const departmentName = user?.departmentName || 'Roads & Infrastructure Department';
+
   const loadCompletedWorks = async () => {
     setLoading(true);
     try {
-      let apiIssues = [];
-      try {
-        const res = await axios.get('http://localhost:5000/api/issues');
-        if (res.data && Array.isArray(res.data)) apiIssues = res.data;
-      } catch (e) { console.error(e); }
-
-      let localReports = [];
-      try {
-        localReports = JSON.parse(localStorage.getItem('my_submitted_reports') || '[]');
-      } catch (e) { console.error(e); }
-
-      const mapById = new Map();
-      [...apiIssues, ...localReports].forEach(item => {
-        const key = item._id || item.id;
-        if (key) mapById.set(key, item);
-      });
-
-      const merged = Array.from(mapById.values());
-
-      const resolvedOnly = merged.filter(i => {
-        const s = (i.status || '').toUpperCase();
-        return s === 'RESOLVED' || s === 'SOLVED';
-      }).map(item => ({
-        id: item._id || item.id,
-        _id: item._id || item.id,
-        title: item.title,
-        description: item.description,
-        ward: item.wardId || item.wardName || 'Ward 4',
-        finalStatus: 'Resolved & Verified',
-        completedDate: new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        beforeImage: item.image || item.imageUrl || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
-        afterImage: item.resolutionImage || 'https://images.unsplash.com/photo-1541888946425-d0fbb186a5b7?auto=format&fit=crop&w=800&q=80',
-        resolutionNote: item.resolutionNote || item.actionTaken || 'Civic repair completed and inspected.',
-        location: item.location,
-        category: item.category,
-      }));
-
-      setCompleted(resolvedOnly);
+      const res = await api.get(`/issues/department/${encodeURIComponent(departmentName)}?status=completed`);
+      if (res.data && Array.isArray(res.data)) {
+        const mapped = res.data.map(item => ({
+          id: item.complaintId || item._id,
+          _id: item._id,
+          title: item.title,
+          description: item.description,
+          ward: item.wardId || item.wardName || 'Ward Assigned',
+          department: item.assignedDept || departmentName,
+          status: item.status,
+          finalStatus: item.status === 'Resolved' ? 'Resolved & Verified' : item.status,
+          completedDate: item.completionDetails?.completedAt 
+            ? new Date(item.completionDetails.completedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+            : new Date(item.updatedAt || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          beforeImage: item.completionDetails?.beforeWorkPhoto || item.image || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
+          afterImage: item.completionDetails?.afterWorkPhoto || item.resolutionImage || 'https://images.unsplash.com/photo-1541888946425-d0fbb186a5b7?auto=format&fit=crop&w=800&q=80',
+          resolutionNote: item.completionDetails?.completionRemarks || item.resolutionNote || 'Civic repair completed and inspected.',
+          location: item.location,
+          category: item.category,
+          priority: item.priority || 'Medium',
+          feedback: item.citizenFeedback
+        }));
+        setCompleted(mapped);
+      }
     } catch (err) {
       console.error('Error loading completed works:', err);
     } finally {
@@ -63,7 +53,7 @@ export default function CompletedWork() {
 
   useEffect(() => {
     loadCompletedWorks();
-  }, []);
+  }, [departmentName]);
 
   const filtered = completed.filter(c => {
     const term = (search || '').toLowerCase();

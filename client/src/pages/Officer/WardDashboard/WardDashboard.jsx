@@ -74,7 +74,7 @@ export default function WardDashboard() {
   const fetchIssues = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/issues');
+      const res = await api.get(`/issues/ward/${wardId}`);
       let apiIssues = [];
       if (res.data && Array.isArray(res.data)) {
         apiIssues = res.data;
